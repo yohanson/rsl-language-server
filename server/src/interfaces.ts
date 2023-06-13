@@ -4,7 +4,7 @@ import { CBase } from './common';
 /**
  * Интерфейс для массива с импортированными модулями
  */
-export interface IFAStruct {
+export interface IImport {
     uri     : string;
     object  : CBase;
 }
@@ -38,7 +38,7 @@ export interface IToken {
  * Интерфейс для настроек сервера
  */
 export interface IRslSettings {
-	import: string;
+	import: boolean;
 }
 
 /**
@@ -71,7 +71,7 @@ export abstract class CAbstractBase {
 /**
  * Флаг приватности
  */
-    protected private_        : boolean;
+    protected isPrivate        : boolean;
 /**
  * Начало и конец блока
  */
@@ -102,7 +102,7 @@ export abstract class CAbstractBase {
  */
     constructor() {
         this.name            = "";
-        this.private_        = false;
+        this.isPrivate        = false;
         this.range           = {start: 0, end: 0};
         this.objKind         = CompletionItemKind.Unit;
         this.varType_        = "variant";
@@ -114,11 +114,11 @@ export abstract class CAbstractBase {
 /**
  * возвращает флаг приватности
  */
-    get Private() : boolean{ return this.private_ }
+    get Private() : boolean{ return this.isPrivate }
 /**
  * Устанавливает флаг приватности
  */
-    set Private(flag: boolean) {this.private_ = flag}
+    set Private(isPrivate: boolean) {this.isPrivate = isPrivate}
 /**
  * Возвращает имя
  */

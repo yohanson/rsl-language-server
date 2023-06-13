@@ -12,10 +12,12 @@ import {
     Definition,
     Position,
     Diagnostic,
-    DiagnosticSeverity
+    DiagnosticSeverity,
+    CompletionItemKind,
+    Range,
 } from 'vscode-languageserver';
 
-import { IFAStruct, IRslSettings, IToken} from  './interfaces';
+import { IImport, IRslSettings, IToken} from  './interfaces';
 import { getDefaults, getCIInfoForArray } from './defaults';
 
 import { CBase } from './common';
@@ -27,95 +29,85 @@ let hasConfigurationCapability  : boolean       = false;
 let hasWorkspaceFolderCapability: boolean       = false;
 let hasDiagnosticRelatedInformationCapability   = false;
 let workFolderOpened            : boolean       = false;
-const defaultSettings           : IRslSettings  = { import: "ДА" };
+const defaultSettings           : IRslSettings  = { import: true};
 let globalSettings              : IRslSettings  = defaultSettings;
 let documentSettings            : Map<string, Thenable<IRslSettings>> = new Map();
-let Imports                     : Array<IFAStruct>;
+let Imports                     : Array<IImport>;
 
-export function GetFileByNameRequest(nameInter:string) {
-    if (workFolderOpened && globalSettings.import == "ДА")
-        connection.sendRequest("getFilebyName", nameInter);
-}
-
-export function GetFileRequest(filePath:string) {
-        connection.sendRequest("getFile", filePath);
-}
-
-export function getTree():Array<IFAStruct> {return Imports}
+export function getTree():Array<IImport> {return Imports}
 
 function getCurDoc(uri:string):TextDocument {
-    GetFileRequest(uri);
-    let curDocArr = documents.all().filter((value)=>{
+    let curDocArr = Imports.filter((value)=>{
         return value.uri == uri;
     });
-    return curDocArr.pop();
+    return curDocArr.pop().object.getTextDocument();
 }
 
 function getCurObj(uri: string): CBase {
   return Imports.find(m => m.uri === uri)?.object;
 }
 
-function FindObject(tdpp: TextDocumentPositionParams): IFAStruct {
+function FindObject(tdpp: TextDocumentPositionParams): IImport {
     let uri = tdpp.textDocument.uri;
     let CBaseObject  : CBase    = undefined;
-    let findObject   : IFAStruct = undefined;
+    let findObject   : IImport = undefined;
     let token        : IToken   = undefined;
     let document     : TextDocument = getCurDoc(tdpp.textDocument.uri);
     let tree         : CBase  = getCurObj(tdpp.textDocument.uri);
-        if (tree != undefined) {
-            let curPos = document.offsetAt(tdpp.position);
-            token = tree.getCurrentToken(curPos);
-            if (token !== undefined) {
-                let objArr = tree.getActualChilds(curPos);
-                let objects: Array<CBase> = new Array();
-                for (const element of objArr) {
-                    if (element.isObject())
-                    {
-                        element.getChilds().forEach(child=>{
-                            if (child.Name === token.str) objects.push(child);
-                        });
-                    }
-                    if (element.Name.toLowerCase() === token.str.toLowerCase()) {
-                        objects.push(element);
-                    }
-                }
-                if (objects.length > 1)
-                {
-                    let minDistanse:number = token.range.start;
-                    for (const iterator of objects)
-                    {
-                        let curDistanse:number = token.range.start - iterator.Range.end;
-                        if (curDistanse < minDistanse)
-                        {
-                            CBaseObject = iterator;
-                            minDistanse = curDistanse;
-                        }
-                    }
-                }
-                else if (objects.length == 1)
-                {
-                    CBaseObject = objects.pop();
-                }
+    if (tree === undefined) {
+        return undefined;
+    }
+    let curOffset = document.offsetAt(tdpp.position);
+    token = tree.getCurrentToken(curOffset);
+    if (token === undefined) {
+        return undefined;
+    }
+    let objArr = tree.getActualChilds(curOffset);
+    let objects: Array<CBase> = new Array();
+    for (const element of objArr) {
+        if (element.isObject()) {
+            element.getChilds().forEach(child=>{
+                if (child.Name === token.str) objects.push(child);
+            });
+        }
+        if (element.Name.toLowerCase() === token.str.toLowerCase()) {
+            objects.push(element);
+        }
+    }
+    if (objects.length > 1) {
+        let minDistanse:number = token.range.start;
+        for (const iterator of objects)
+        {
+            let curDistanse:number = token.range.start - iterator.Range.end;
+            if (curDistanse < minDistanse)
+            {
+                CBaseObject = iterator;
+                minDistanse = curDistanse;
+            }
+        }
+    }
+    else if (objects.length == 1)
+    {
+        CBaseObject = objects.pop();
+    }
 
-                if (CBaseObject == undefined)
-                {
-                    for (const iterator of Imports) {
-                        if (iterator.uri != tdpp.textDocument.uri) {
-                            let objArr = iterator.object.getActualChilds(0);
-                            for (const element of objArr) {
-                                if (element.Name === token.str) {
-                                    CBaseObject = element;
-                                    uri = iterator.uri;
-                                    break;
-                                }
-                            }
-                        }
-                        if (CBaseObject != undefined) break;
+    if (CBaseObject == undefined)
+    {
+        for (const iterator of Imports) {
+            if (iterator.uri != tdpp.textDocument.uri) {
+                let objArr = iterator.object.getActualChilds(0);
+                for (const element of objArr) {
+                    if (element.Name === token.str) {
+                        CBaseObject = element;
+                        uri = iterator.uri;
+                        break;
                     }
                 }
             }
+            if (CBaseObject != undefined) break;
         }
-        findObject = (CBaseObject != undefined)?{object: CBaseObject, uri: uri}: undefined;
+    }
+    findObject = (CBaseObject != undefined)?{object: CBaseObject, uri: uri}: undefined;
     return findObject;
 }
 
@@ -203,62 +195,53 @@ documents.onDidClose(e => {
 });
 
 documents.onDidChangeContent(change => {
-    //connection.console.log(`Парсинг файла: ${change.document.uri.toString()}`);
     validateTextDocument(change.document);
 });
 
-async function validateTextDocument(textDocument: TextDocument): Promise<void> {
-  globalSettings = await getDocumentSettings(textDocument.uri);
-  let text = textDocument.getText();
+export async function validateTextDocument(textDocument: TextDocument): Promise<void> {
+    globalSettings = await getDocumentSettings(textDocument.uri);
+    let text = textDocument.getText();
 
-  const module = Imports.find(m => m.uri === textDocument.uri);
-  if (module) {
-    module.object = new CBase(text, 0);
-  } else {
-    Imports.push({ uri: textDocument.uri, object: new CBase(text, 0) });
-  }
+    let diagnostics: Diagnostic[] = [];
+    const module = Imports.find(m => m.uri === textDocument.uri);
+    let range: Range = { start: textDocument.positionAt(0), end: {line: textDocument.lineCount + 1, character: 0 }};
+    if (module) {
+        module.object = new CBase(textDocument, range, CompletionItemKind.Unit, diagnostics);
+    } else {
+        Imports.push({ uri: textDocument.uri, object: new CBase(textDocument, range, CompletionItemKind.Unit, diagnostics) });
+    }
 
 
-    connection.sendRequest("updateStatusBar", Imports.length); //обновим статус строку
+    let pattern = /\b(record|array)\b/gi;
+    let m: RegExpExecArray | null;
 
-    let currentEditor = connection.sendRequest("getActiveTextEditor");
-    currentEditor.then((value:string)=>{
-        if (value == textDocument.uri)
-        {
-            let pattern = /\b(record|array)\b/gi;
-            let m: RegExpExecArray | null;
-        
-            let diagnostics: Diagnostic[] = [];
-            while (m = pattern.exec(text)) {
-                let diagnostic: Diagnostic = {
-                    severity: DiagnosticSeverity.Information,
-                    range: {
-                        start: textDocument.positionAt(m.index),
-                        end: textDocument.positionAt(m.index + m[0].length)
+    while (m = pattern.exec(text)) {
+        let diagnostic: Diagnostic = {
+            severity: DiagnosticSeverity.Information,
+            range: {
+                start: textDocument.positionAt(m.index),
+                end: textDocument.positionAt(m.index + m[0].length)
+            },
+            message: `Определение ${m[0].toUpperCase()} устарело, от такого надо избавляться по возможности`,
+            source: 'RSL parser'
+        };
+        //добавляет дополнительную информацию к выводу проблемы
+        if (hasDiagnosticRelatedInformationCapability) {
+            diagnostic.relatedInformation = [
+                {
+                    location: {
+                        uri: textDocument.uri,
+                        range: Object.assign({}, diagnostic.range)
                     },
-                    message: `Определение ${m[0].toUpperCase()} устарело, от такого надо избавляться по возможности`,
-                    source: 'RSL parser'
-                };
-                /*
-                //добавляет дополнительную информацию к выводу проблемы
-                if (hasDiagnosticRelatedInformationCapability) {
-                    diagnostic.relatedInformation = [
-                        {
-                            location: {
-                                uri: textDocument.uri,
-                                range: Object.assign({}, diagnostic.range)
-                            },
-                            message: 'непонятная надпись'
-                        }
-                    ];
-                }*/
-                diagnostics.push(diagnostic);
-            }
-        
-            // Send the computed diagnostics to VSCode.
-            connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+                    message: 'непонятная надпись'
+                }
+            ];
         }
-    });
+        diagnostics.push(diagnostic);
+    }
+
+    // Send the computed diagnostics to VSCode.
+    connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
 }
 
 connection.onDidChangeWatchedFiles(_change => {
@@ -296,7 +279,7 @@ function isNotCommentOrString(tdpp: TextDocumentPositionParams):boolean
 connection.onCompletion((tdpp: TextDocumentPositionParams): CompletionItem[] => {
     let CompletionItemArray : Array<CompletionItem>  = new Array();
     let document            : TextDocument           = getCurDoc(tdpp.textDocument.uri);
-    let obj                 : IFAStruct               = FindObject(tdpp);
+    let obj                 : IImport               = FindObject(tdpp);
     let curPos = document.offsetAt(tdpp.position);
     
     if (isNotCommentOrString(tdpp))
@@ -342,11 +325,11 @@ connection.onHover((tdpp: TextDocumentPositionParams): Hover => {
     if (isNotCommentOrString(tdpp))
     {
         let document : TextDocument = getCurDoc(tdpp.textDocument.uri);
-        let obj      : IFAStruct     = FindObject(tdpp);
+        let obj      : IImport     = FindObject(tdpp);
         let token    : IToken       = getCurObj(tdpp.textDocument.uri).getCurrentToken(document.offsetAt(tdpp.position));
         if (obj != undefined) {
             let CIInfo = obj.object.CIInfo;
-            let comment:string = (CIInfo.documentation.toString().length > 0)? ` \n\r${CIInfo.documentation.toString()}`: "";
+            let comment:string = (CIInfo.documentation.toString().length > 0)? `\r\n${CIInfo.documentation.toString()}`: "";
             hover = {
                 contents: `${CIInfo.detail}${comment}`,
                 range : { start: document.positionAt(token.range.start),
@@ -360,28 +343,29 @@ connection.onHover((tdpp: TextDocumentPositionParams): Hover => {
 
 
 connection.onDefinition((tdpp: TextDocumentPositionParams) => {
-    let obj     : IFAStruct     = FindObject(tdpp);
+    let obj     : IImport     = FindObject(tdpp);
     let result  : Definition   = undefined;
     if (isNotCommentOrString(tdpp))
     {
         if (obj != undefined) {
-                let document: TextDocument = getCurDoc(obj.uri);
-                let range = obj.object.Range;
-                let startPos: Position = document.positionAt(range.start);
-                let endPos  : Position = document.positionAt(range.start + obj.object.Name.length);
-                result = Location.create(obj.uri, {
-                    start: startPos,
-                    end  : endPos
-                })
+            let document: TextDocument = getCurDoc(obj.uri);
+            if (document === undefined) return null;
+            let range = obj.object.Range;
+            let startPos: Position = document.positionAt(range.start);
+            let endPos  : Position = document.positionAt(range.start + obj.object.Name.length);
+            result = Location.create(obj.uri, {
+                start: startPos,
+                end  : endPos
+            })
         }
     }
     return (result !== undefined)? result: null;
 });
 
 function refreshModule(textDocument: TextDocument) {
-  const text = textDocument.getText();
   const { uri } = textDocument;
-  const object = new CBase(text, 0);
+  let range: Range = { start: textDocument.positionAt(0), end: {line: textDocument.lineCount + 1, character: 0 }};
+  const object = new CBase(textDocument, range);
 
   const module = Imports.find(m => m.uri === uri);
   if (module) {

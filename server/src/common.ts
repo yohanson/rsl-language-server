@@ -8,12 +8,20 @@ import {
     Hover,
     Definition,
     Location,
+    Diagnostic,
+    DiagnosticSeverity,
+    Range,
 } from 'vscode-languageserver';
 
-import { DEFAULT_WHITESPACES, STOP_CHARS, varType, kwdNum, SkipComment, intersNum, OLC, MLC_O, MLC_C, DIGITS } from './enums';
+import Uri from 'vscode-uri';
+
+import { DEFAULT_WHITESPACES, LINEBREAKS, STOP_CHARS, varType, kwdNum, SkipComment, intersNum, OLC, MLC_O, MLC_C, DIGITS } from './enums';
 import { ArrayClass, getDefaults, getCIInfoForArray } from './defaults'
-import { getTree, GetFileByNameRequest } from './server';
-import { IFAStruct, If_s, IArray, IRange, CAbstractBase, IToken } from './interfaces';
+import { getTree, validateTextDocument } from './server';
+import { IImport, If_s, IArray, IRange, CAbstractBase, IToken } from './interfaces';
+import { readFileSync, existsSync } from 'fs';
+import { convertIRange, convertToIRange } from './utils';
+import { resolve } from 'path';
 
 class CArray implements IArray{
     _it:Array<string>;
@@ -162,7 +170,7 @@ export class CVar extends CAbstractBase {
         super();
         this.value = "";
         this.name = name;
-        this.private_ = privateFlag;
+        this.isPrivate = privateFlag;
         this.objKind = isProperty ? CompletionItemKind.Property : (isConstant ? CompletionItemKind.Constant : CompletionItemKind.Variable);
         this.insertedText = name;
     }
@@ -175,28 +183,33 @@ export class CVar extends CAbstractBase {
     isActual(pos: number)   : boolean { return (this.range.end < pos) }
     reParsing()             : void {}
 }
-/** Родительский класс для макросов и классов*/
+/** Родительский класс для файлов, макросов и классов*/
 export class CBase extends CAbstractBase {
     protected childs      : Array<CBase>;
+    protected textDocument: TextDocument;
     protected source      : string;
     protected paramStr    : string;
-    protected position    : number;
-    protected savedPos    : number;
+    /** Номер символа от начала файла */
     protected offset      : number;
+    protected savedPos    : number;
+    protected diagnostics: Array<Diagnostic>;
 
-    constructor(src:string, offset:number, objKind:CompletionItemKind = CompletionItemKind.Unit) {
+    constructor(textDocument: TextDocument, range: Range, objKind:CompletionItemKind = CompletionItemKind.Unit, diagnostics: Array<Diagnostic> = []) {
         super();
         this.childs         = new Array();
-        this.source         = src;
+        this.textDocument   = textDocument;
+        this.source         = this.textDocument.getText(range);
         this.paramStr       = "";
-        this.position       = 0;
         this.savedPos       = 0;
-        this.offset         = offset;
+        this.offset         = this.textDocument.offsetAt(range.start);
         this.objKind        = objKind;
+        this.diagnostics = diagnostics;
         this.parse();
     }
 
     updateCIInfo(): void {}
+
+    getTextDocument(): TextDocument { return this.textDocument}
 
     isActual(pos: number): boolean { return (this.range.start < pos && pos < this.range.end) }
 
@@ -210,7 +223,7 @@ export class CBase extends CAbstractBase {
         return Obj;
     }
 
-    reParsing() { this.position = 0; this.parse(); }
+    reParsing() { this.offset = 0; this.parse(); }
     getChilds() { return this.childs; }
     addChild(node: any) { this.childs.push(node); }
     setType(type: string) { this.varType_ = type }
@@ -218,9 +231,11 @@ export class CBase extends CAbstractBase {
     getActualChilds(position: number):Array<CBase> {
         let answer: Array<CBase> = new Array();
         if (position != 0) //Ищем в текущем файле
+        {
             this.childs.forEach(parent => {
-                if (parent.range.end < position)
+                if (parent.range.end < position) {
                     answer.push(parent);
+                }
                 if (parent.isActual(position)) //пробуем взять только актуальные 
                 {
                     if (parent.isObject())
@@ -231,23 +246,26 @@ export class CBase extends CAbstractBase {
                     }
                 }
             });
+        }
         else //ищем в другом файле, надо выдать все не приватные элементы
+        {
             this.childs.forEach(parent => {
                 if (!parent.Private)
                     answer.push(parent);
             });
+        }
         return answer;
     }
 
-    getCurrentToken(_position: number, savePosition: boolean = true): IToken {
+    getCurrentToken(offset: number, savePosition: boolean = true): IToken {
         let res: IToken = undefined;
-        if (_position > 0) {
+        if (offset > 0) {
             this.SavePos();
-            this.position = _position-1;
+            this.offset = offset;
             if (!DEFAULT_WHITESPACES.includes(this.CurrentChar)) {
-                if (this.CurrentChar === ".") this.position--;
+                if (this.CurrentChar === ".") this.offset--;
                 while (!this.IsStopChar() && this.CurrentChar != undefined) {
-                    this.position--;
+                    this.offset--;
                 }
                 if (this.IsStopChar()) this.Next();
                 res = this.NextToken();
@@ -302,28 +320,26 @@ export class CBase extends CAbstractBase {
         return answer;
     }
     protected     getKeywordNum(token: string): If_s<number> { return KEYWORDS.is(token.toLowerCase()); }
-    protected     CurIndex(index: number)     : string    { return index < this.source.length ? this.source[index] : ""; }
-    protected get CurrentChar()               : string    { return this.CurIndex(this.position); }
-    protected get Pos()                       : number    { return this.position; }
+    protected     charAt(index: number)       : string    { return index < this.source.length ? this.source[index] : ""; }
+    protected get CurrentChar()               : string    { return this.charAt(this.offset); }
+    protected get Pos()                       : number    { return this.offset; }
     protected get End()                       : boolean   { return this.CurrentChar == ""; }
-    protected     Next()                      : void      { if (!this.End) this.position++; }
+    protected     Next()                      : void      { if (!this.End) this.offset++; }
     protected     Skip()                      : void      { while (DEFAULT_WHITESPACES.includes(this.CurrentChar) && !this.End) this.Next(); }
     protected     IsStopChar()                : boolean   { return STOP_CHARS.includes(this.CurrentChar); }
-    protected     RestorePos()                : void      {this.position = this.savedPos}
-    protected     SavePos()                   : void      {this.savedPos = this.position}
-    protected     getObjectBody()             : string    {
-        let result: string;
+    protected     RestorePos()                : void      {this.offset = this.savedPos}
+    protected     SavePos()                   : void      {this.savedPos = this.offset}
+    protected     getObjectBodyRange(): Range {
         let token: string;
         let savePos: number = this.Pos;
-        let inToken: number = 1;
-        let outToken: number = 0;
-        while (inToken != outToken && !this.End) {
+        let indent: number = 1;
+        while (indent !== 0 && !this.End) {
             token = this.NextToken().str;
-            if (tokensWithEnd.is(token).first) inToken++;
-            else if (token.toLowerCase() == "end") outToken++;
+            if (tokensWithEnd.is(token).first) indent++;
+            else if (token.toLowerCase() == "end") indent--;
         }
-        result = this.source.substring(savePos, this.Pos);
-        return result;
+        let range: Range = {start: this.textDocument.positionAt(savePos), end: this.textDocument.positionAt(this.Pos)};
+        return range;
     }
     protected     NextToken(skipComment: SkipComment = SkipComment.yes): IToken {
         this.Skip();
@@ -336,7 +352,7 @@ export class CBase extends CAbstractBase {
                 this.Next();
 
                 while (!stop && !this.End) {
-                    stop = (this.CurrentChar == "\"" && this.CurIndex(this.position - 1) != "\\") ? true : false;
+                    stop = (this.CurrentChar == "\"" && this.charAt(this.offset - 1) != "\\") ? true : false;
                     token = token + this.CurrentChar;
                     this.Next();
                 }
@@ -379,10 +395,10 @@ export class CBase extends CAbstractBase {
         }
         return answer.first;
     }
-    protected     CreateVariable(isPrivate: boolean, offset: number, isConstant: boolean = false) {
+    protected     CreateVariable(isPrivate: boolean, isConstant: boolean = false) {
         let token: IToken = this.NextToken();
         let varObject: CVar = new CVar(token.str, isPrivate, isConstant, this.ObjKind === CompletionItemKind.Class);
-        varObject.setRange({start: token.range.start + offset, end: token.range.end + offset});
+        varObject.setRange({start: token.range.start, end: token.range.end});
         token = this.NextToken();
         let stop: boolean = false;
         let comment: string = "";
@@ -417,7 +433,7 @@ export class CBase extends CAbstractBase {
                         comment = (token.str == OLC) ? this.GetOLC() : this.GetMLC();
                         varObject.Description(comment);
                     }
-                    if (sToken == ",") this.CreateVariable(isPrivate, this.offset, isConstant);
+                    if (sToken == ",") this.CreateVariable(isPrivate, isConstant);
                     stop = true;
                 } break;
             }
@@ -427,12 +443,15 @@ export class CBase extends CAbstractBase {
     }
     protected     GetOLC()                    : string 	{
         let comment: string = "";
-        while (this.CurrentChar != "\r" && !this.End) {comment += this.CurrentChar; this.Next();}
-        return comment;
+        while (!LINEBREAKS.includes(this.CurrentChar) && !this.End) {
+            comment += this.CurrentChar;
+            this.Next();
+        }
+        return comment.trim();
     }
     protected     GetMLC()                    : string 	{
         let comment: string = "";
-        while (!((this.CurrentChar == "*") && (this.CurIndex(this.Pos + 1) == "/")) && !this.End) {
+        while (!((this.CurrentChar == "*") && (this.charAt(this.Pos + 1) == "/")) && !this.End) {
             comment += this.CurrentChar;
             this.Next();
         }
@@ -471,7 +490,7 @@ export class CBase extends CAbstractBase {
                 answer.second = getTypeStr(varType._bool);
             }
             else {//надо поискать в именах объявленных и импортированных классов и функций FIXME: переделать
-                let baseObject: Array<IFAStruct> = getTree();
+                let baseObject: Array<IImport> = getTree();
                 let obj: CAbstractBase;
                 if (baseObject != undefined) {
                     for (const iterator of baseObject) {
@@ -498,25 +517,27 @@ export class CBase extends CAbstractBase {
     }
     protected     CreateMacro(isPrivate: boolean)   :void           {
         let isMethod = (this.ObjKind == CompletionItemKind.Class);
-        let range: IRange = {start: this.offset + this.Pos + this.range.start, end: 0};
-        let name: string = this.NextToken().str;
-        let body: string = this.getObjectBody();
-        range.end = this.offset + this.Pos + this.range.start;
-        let macro: CMacro = new CMacro(body, name, isPrivate, range, isMethod);
+        let name: IToken = this.NextToken();
+        let range: Range = {
+            start: this.textDocument.positionAt(name.range.start),
+            end: this.getObjectBodyRange().end
+        };
+        let macro: CMacro = new CMacro(this.textDocument, range, name.str, isPrivate, isMethod);
         this.addChild(macro);
     }
     protected     CreateClass(isPrivate: boolean)   : void {
-        let range: IRange = {start: this.Pos + this.range.start, end: 0};
         let parentName: string = "";
-        let name: string = this.NextToken().str;
-        if (name == "(") {
+        let name: IToken = this.NextToken();
+        if (name.str == "(") {
             parentName = this.NextToken().str; //это имя родительского класса
             this.Next();
-            name = this.NextToken().str;
+            name = this.NextToken();
         }
-        let body: string = this.getObjectBody();
-        range.end = this.Pos + this.range.start;
-        let classObj: CClass = new CClass(body, name, parentName, isPrivate, range);
+        let range: Range = {
+            start: this.textDocument.positionAt(name.range.start),
+            end: this.getObjectBodyRange().end
+        };
+        let classObj: CClass = new CClass(this.textDocument, range, name.str, parentName, isPrivate);
         this.addChild(classObj);
     }
     protected     CreateImport(): void {
@@ -529,10 +550,26 @@ export class CBase extends CAbstractBase {
         names.forEach(nameInter => {
             //запросим открытие такого файла
             if (!nameInter.endsWith(".mac")) nameInter = nameInter + ".mac";
-                GetFileByNameRequest(nameInter);
+            if (!existsSync(nameInter)) {
+                let importError: Diagnostic = {
+                    severity: DiagnosticSeverity.Error,
+                    range: {
+                        start: this.textDocument.positionAt(this.offset),
+                        end: this.textDocument.positionAt(this.offset + 1)
+                    },
+                    message: `Cannot find file "${nameInter}"`,
+                    source: 'RSL parser'
+                };
+                this.diagnostics.push(importError);
+                return;
+            };
+            let text = readFileSync(nameInter).toString();
+            let uri = Uri.file(resolve(nameInter)).toString();
+            let textDocument = TextDocument.create(uri, 'rsl', 0, text);
+            validateTextDocument(textDocument);
         });
     }
-    protected parse():void 	{
+    protected parse(): void {
         this.childs = new Array();
         this.Skip();
         let curToken: string;
@@ -543,14 +580,14 @@ export class CBase extends CAbstractBase {
             let savePos: number = this.Pos;
             curToken = this.NextToken().str;
             if (curToken != ")") {
-                this.position = savePos;
+                this.offset = savePos;
                 while (this.CurrentChar != closeBracket.toString() && !this.End) {
                     paramString += this.CurrentChar;
                     this.Next();
                 }
                 paramString += ")";
-                this.position = savePos;
-                this.CreateVariable(true, this.offset);
+                this.offset = savePos;
+                this.CreateVariable(true);
             }
             else paramString = paramString + curToken; //")"
             let stop = false;
@@ -562,7 +599,7 @@ export class CBase extends CAbstractBase {
                     this.Description(comment);
                     stop = true;
                 }
-                else { this.position = savePos; stop = true; }
+                else { this.offset = savePos; stop = true; }
 
             } while (!stop)
             this.paramStr = paramString;
@@ -580,16 +617,16 @@ export class CBase extends CAbstractBase {
                             let tmp = this.getKeywordNum(curToken);
                             if (tmp.first) {
                                 switch (tmp.second) {
-                                    case kwdNum._const: this.CreateVariable(true, this.offset/* this.range.start */, true); break;
-                                    case kwdNum._var  : this.CreateVariable(true, this.offset/* this.range.start */); break;
+                                    case kwdNum._const: this.CreateVariable(true, true); break;
+                                    case kwdNum._var  : this.CreateVariable(true); break;
                                     case kwdNum._macro: this.CreateMacro(true); break;
                                     case kwdNum._class: this.CreateClass(true); break;
                                     default: break;
                                 }
                             }
                         } break;
-                    case kwdNum._const : this.CreateVariable(false, this.offset/* this.range.start */, true); break;
-                    case kwdNum._var   : this.CreateVariable(false, this.offset/* this.range.start */); break;
+                    case kwdNum._const : this.CreateVariable(false, true); break;
+                    case kwdNum._var   : this.CreateVariable(false); break;
                     case kwdNum._macro : this.CreateMacro(false); break;
                     case kwdNum._import: this.CreateImport(); break;
                     case kwdNum._class : this.CreateClass(false); break;
@@ -603,12 +640,12 @@ export class CBase extends CAbstractBase {
 /** Базовый класс для макросов*/
 class CMacro extends CBase {
 
-    constructor(src: string, name: string, privateFlag: boolean, range: IRange, isMethod: boolean) {
-        super(src, range.start + name.length + 1, isMethod ? CompletionItemKind.Method : CompletionItemKind.Function);
-        this.name           = name;
-        this.private_       = privateFlag;
-        this.range          = range;
-        this.insertedText   = `${name}()`;
+    constructor(textDocument: TextDocument, range: Range, name: string, isPrivate: boolean, isMethod: boolean) {
+        super(textDocument, range, isMethod ? CompletionItemKind.Method : CompletionItemKind.Function);
+        this.name = name;
+        this.isPrivate = isPrivate;
+        this.range = convertToIRange(textDocument, range);
+        this.insertedText = `${name}()`;
     }
     updateCIInfo(): void {
         this.detail = `${getStrItemKind(this.objKind)}: `;
@@ -619,14 +656,14 @@ class CMacro extends CBase {
 class CClass extends CBase {
     private parentName:string;
 
-    constructor(src:string, name:string, parentName:string, privateFlag:boolean, range:IRange){
-        super(src, range.start + name.length + 1, CompletionItemKind.Class);
-        this.name          = name;
-        this.parentName    = parentName;
-        this.private_      = privateFlag;
-        this.insertedText  = name;
-        this.varType_      = name;
-        this.range         = range;
+    constructor(textDocument: TextDocument, range: Range, name:string, parentName:string, privateFlag:boolean){
+        super(textDocument, range, CompletionItemKind.Class);
+        this.name = name;
+        this.parentName = parentName;
+        this.isPrivate = privateFlag;
+        this.insertedText = name;
+        this.varType_ = name;
+        this.range = convertToIRange(textDocument, range);
         if (parentName.length > 0) {
             //TODO: подгрузить методы и свойства родительского класса
         }

@@ -13,6 +13,13 @@ export function convertIRange(doc: TextDocument, rng: IRange): Range {
   };
 }
 
+export function convertToIRange(doc: TextDocument, rng: Range): IRange {
+  return {
+    start: doc.offsetAt(rng.start),
+    end: doc.offsetAt(rng.end)
+  };
+}
+
 export function fromCompletionItemKind(k: CompletionItemKind): SymbolKind {
   switch (k) {
     // case CompletionItemKind.Text: return SymbolKind.Text;

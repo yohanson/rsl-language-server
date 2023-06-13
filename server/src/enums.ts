@@ -2,6 +2,7 @@
  * Константы.
  */
 export const DEFAULT_WHITESPACES: string = " \n\r\t";
+export const LINEBREAKS: string = "\n\r";
 export const STOP_CHARS         : string = ".,():;=<>![]" + DEFAULT_WHITESPACES;
 export const DIGITS             : string = "0123456789";
 export const OLC                : string = "//";
