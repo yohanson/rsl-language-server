@@ -2,7 +2,6 @@ import {
     CompletionItem,
     CompletionItemKind,
     TextDocumentPositionParams,
-    TextDocument,
     Position,
     InsertTextFormat,
     Hover,
@@ -11,7 +10,11 @@ import {
     Diagnostic,
     DiagnosticSeverity,
     Range,
-} from 'vscode-languageserver';
+} from 'vscode-languageserver/node';
+
+import {
+    TextDocument
+} from 'vscode-languageserver-textdocument';
 
 import { URI } from 'vscode-uri';
 
@@ -21,7 +24,8 @@ import { getTree, validateTextDocument } from './server';
 import { IImport, If_s, IArray, IRange, CAbstractBase, IToken } from './interfaces';
 import { readFileSync, existsSync } from 'fs';
 import { convertIRange, convertToIRange } from './utils';
-import { resolve } from 'path';
+import { fileURLToPath } from 'url';
+import * as path from 'path';
 
 class CArray implements IArray{
     _it:Array<string>;
@@ -549,7 +553,14 @@ export class CBase extends CAbstractBase {
         let names: string[] = InterNamesProcess(token);
         names.forEach(nameInter => {
             //запросим открытие такого файла
+            let curAbsDir = path.dirname(fileURLToPath(this.textDocument.uri));
+            let searchDir = path.relative(process.cwd(), curAbsDir);
             if (!nameInter.endsWith(".mac")) nameInter = nameInter + ".mac";
+
+            let fullpath = nameInter;
+            if (searchDir.length) {
+                fullpath = searchDir + path.sep + nameInter;
+            }
             if (!existsSync(nameInter)) {
                 let importError: Diagnostic = {
                     severity: DiagnosticSeverity.Error,
@@ -564,7 +575,7 @@ export class CBase extends CAbstractBase {
                 return;
             };
             let text = readFileSync(nameInter).toString();
-            let uri = URI.file(resolve(nameInter)).toString();
+            let uri = URI.file(path.resolve(nameInter)).toString();
             let textDocument = TextDocument.create(uri, 'rsl', 0, text);
             validateTextDocument(textDocument);
         });
