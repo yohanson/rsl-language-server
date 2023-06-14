@@ -11,8 +11,13 @@
 		"type": "git",
 		"url": "https://github.com/yohanson/rsl-language-server"
 	},
-	"dependencies": {
-		"vscode-languageserver": "^4.1.3"
+	"scripts": {},
+	"devDependencies": {
+		"@types/node": "^20.3.1"
 	},
-	"scripts": {}
+	"dependencies": {
+		"vscode-languageserver": "^8.1.0",
+		"vscode-languageserver-textdocument": "^1.0.8",
+		"vscode-uri": "^3.0.7"
+	}
 }

@@ -13,7 +13,7 @@ import {
     Range,
 } from 'vscode-languageserver';
 
-import Uri from 'vscode-uri';
+import { URI } from 'vscode-uri';
 
 import { DEFAULT_WHITESPACES, LINEBREAKS, STOP_CHARS, varType, kwdNum, SkipComment, intersNum, OLC, MLC_O, MLC_C, DIGITS } from './enums';
 import { ArrayClass, getDefaults, getCIInfoForArray } from './defaults'
@@ -564,7 +564,7 @@ export class CBase extends CAbstractBase {
                 return;
             };
             let text = readFileSync(nameInter).toString();
-            let uri = Uri.file(resolve(nameInter)).toString();
+            let uri = URI.file(resolve(nameInter)).toString();
             let textDocument = TextDocument.create(uri, 'rsl', 0, text);
             validateTextDocument(textDocument);
         });

@@ -1,21 +1,25 @@
 import {
-    createConnection,
-    TextDocuments,
-    TextDocument,
-    ProposedFeatures,
-    InitializeParams,
-    DidChangeConfigurationNotification,
     CompletionItem,
-    TextDocumentPositionParams,
-    Hover,
-    Location,
+    CompletionItemKind,
+    createConnection,
     Definition,
-    Position,
     Diagnostic,
     DiagnosticSeverity,
-    CompletionItemKind,
+    DidChangeConfigurationNotification,
+    Hover,
+    InitializeParams,
+    Location,
+    Position,
+    ProposedFeatures,
     Range,
-} from 'vscode-languageserver';
+    TextDocumentPositionParams,
+    TextDocuments,
+    TextDocumentSyncKind,
+} from 'vscode-languageserver/node';
+
+import {
+	TextDocument
+} from 'vscode-languageserver-textdocument';
 
 import { IImport, IRslSettings, IToken} from  './interfaces';
 import { getDefaults, getCIInfoForArray } from './defaults';
@@ -23,8 +27,8 @@ import { getDefaults, getCIInfoForArray } from './defaults';
 import { CBase } from './common';
 import { getSymbols } from './docsymbols';
 
-let connection = createConnection(ProposedFeatures.all);
-let documents                   : TextDocuments = new TextDocuments();
+const connection: ProposedFeatures.Connection = createConnection(ProposedFeatures.all);
+let documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
 let hasConfigurationCapability  : boolean       = false;
 let hasWorkspaceFolderCapability: boolean       = false;
 let hasDiagnosticRelatedInformationCapability   = false;
@@ -123,7 +127,7 @@ connection.onInitialize((params: InitializeParams) => {
         capabilities.textDocument.publishDiagnostics.relatedInformation);
     return {
         capabilities: {
-            textDocumentSync: documents.syncKind,
+            textDocumentSync: TextDocumentSyncKind.Incremental,
             // Включим поддержку автодополнения
             completionProvider: {
                 resolveProvider: true,
