@@ -5,6 +5,7 @@ import {
     Definition,
     Diagnostic,
     DiagnosticSeverity,
+    DiagnosticTag,
     DidChangeConfigurationNotification,
     Hover,
     InitializeParams,
@@ -227,7 +228,8 @@ export async function validateTextDocument(textDocument: TextDocument): Promise<
                 end: textDocument.positionAt(m.index + m[0].length)
             },
             message: `Определение ${m[0].toUpperCase()} устарело, от такого надо избавляться по возможности`,
-            source: 'RSL parser'
+            source: 'RSL parser',
+            tags: [ DiagnosticTag.Deprecated ],
         };
         //добавляет дополнительную информацию к выводу проблемы
         if (hasDiagnosticRelatedInformationCapability) {
