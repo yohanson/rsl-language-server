@@ -146,22 +146,6 @@ function getStrItemKind(kind: number): string { return STR_ITEM_KIND.str(kind); 
  /** Возвращает строковое значение типа переменной*/
 function getTypeStr(typeNum:varType): string { return TYPES.str(typeNum); }
 
-function InterNamesProcess(str: string): string[] {
-    if (str.includes(OLC) || str.includes(MLC_O)) { //если в строку как-то попали комментарии - их надо удалить
-        //TODO:
-    }
-    let tmp: string[] = str.split(",");
-    let names: string[] = [];
-    tmp.forEach(name => {
-        name = name.trim();
-        if (name[0] == "\"") name = name.substring(1, name.length);
-        if (name[name.length - 1] == "\"") name = name.substring(0, name.length - 1);
-        name = name.trim();
-        names.push(name);
-    });
-    return names;
-}
-
 let tokensWithEnd:CEnds = new CEnds();
 let TYPES:Ctypes = new Ctypes();
 let KEYWORDS:Ckeywords = new Ckeywords();
@@ -231,6 +215,18 @@ export class CBase extends CAbstractBase {
     getChilds() { return this.childs; }
     addChild(node: any) { this.childs.push(node); }
     setType(type: string) { this.varType_ = type }
+
+    ProcessImportNames(): Range[] {
+        let names: Range[] = [];
+        let token: IToken;
+        let delimiter: IToken;
+        do {
+            token = this.NextToken();
+            names.push(convertIRange(this.textDocument, token.range));
+            delimiter = this.NextToken();
+        } while (delimiter.str != ';');
+        return names;
+    }
 
     getActualChilds(position: number):Array<CBase> {
         let answer: Array<CBase> = new Array();
@@ -370,10 +366,12 @@ export class CBase extends CAbstractBase {
             if (skipComment == SkipComment.yes) {
                 if (token == OLC) {
                     this.SkipToEndComment(true);
+                    savedPosition = this.Pos;
                     token = this.NextToken(skipComment).str;
                 }
                 else if (token == MLC_O) {
                     this.SkipToEndComment();
+                    savedPosition = this.Pos;
                     token = this.NextToken(skipComment).str;
                 }
             }
@@ -545,13 +543,9 @@ export class CBase extends CAbstractBase {
         this.addChild(classObj);
     }
     protected     CreateImport(): void {
-        let token: string = "";
-        while (this.CurrentChar != ";" && !this.End) { //получаем строку до ;
-            token += this.CurrentChar;
-            this.Next();
-        }
-        let names: string[] = InterNamesProcess(token);
-        names.forEach(nameInter => {
+        let nameRanges: Range[] = this.ProcessImportNames();
+        nameRanges.forEach(nameRange => {
+            let nameInter = this.textDocument.getText(nameRange);
             //запросим открытие такого файла
             let curAbsDir = path.dirname(fileURLToPath(this.textDocument.uri));
             let searchDir = path.relative(process.cwd(), curAbsDir);
@@ -564,10 +558,7 @@ export class CBase extends CAbstractBase {
             if (!existsSync(nameInter)) {
                 let importError: Diagnostic = {
                     severity: DiagnosticSeverity.Error,
-                    range: {
-                        start: this.textDocument.positionAt(this.offset),
-                        end: this.textDocument.positionAt(this.offset + 1)
-                    },
+                    range: nameRange,
                     message: `Cannot find file "${nameInter}"`,
                     source: 'RSL parser'
                 };
