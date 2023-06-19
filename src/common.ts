@@ -555,7 +555,7 @@ export class CBase extends CAbstractBase {
             if (searchDir.length) {
                 fullpath = searchDir + path.sep + nameInter;
             }
-            if (!existsSync(nameInter)) {
+            if (!existsSync(fullpath)) {
                 let importError: Diagnostic = {
                     severity: DiagnosticSeverity.Error,
                     range: nameRange,
@@ -565,8 +565,8 @@ export class CBase extends CAbstractBase {
                 this.diagnostics.push(importError);
                 return;
             };
-            let text = readFileSync(nameInter).toString();
-            let uri = URI.file(path.resolve(nameInter)).toString();
+            let text = readFileSync(fullpath).toString();
+            let uri = URI.file(path.resolve(fullpath)).toString();
             let textDocument = TextDocument.create(uri, 'rsl', 0, text);
             validateTextDocument(textDocument);
         });
