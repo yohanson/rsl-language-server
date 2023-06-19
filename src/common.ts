@@ -397,6 +397,13 @@ export class CBase extends CAbstractBase {
         }
         return answer.first;
     }
+    protected CreateRecord(isPrivate: boolean = false, isConstant: boolean = false) {
+        let name = this.NextToken();
+        let record = new CVar(name.str, isPrivate, isConstant, false);
+        record.setRange(name.range);
+        record.setType("record");
+        this.addChild(record);
+    }
     protected     CreateVariable(isPrivate: boolean, isConstant: boolean = false) {
         let token: IToken = this.NextToken();
         let varObject: CVar = new CVar(token.str, isPrivate, isConstant, this.ObjKind === CompletionItemKind.Class);
@@ -621,6 +628,7 @@ export class CBase extends CAbstractBase {
                                 switch (tmp.second) {
                                     case kwdNum._const: this.CreateVariable(true, true); break;
                                     case kwdNum._var  : this.CreateVariable(true); break;
+                                    case kwdNum._record: this.CreateRecord(true); break;
                                     case kwdNum._macro: this.CreateMacro(true); break;
                                     case kwdNum._class: this.CreateClass(true); break;
                                     default: break;
@@ -629,6 +637,7 @@ export class CBase extends CAbstractBase {
                         } break;
                     case kwdNum._const : this.CreateVariable(false, true); break;
                     case kwdNum._var   : this.CreateVariable(false); break;
+                    case kwdNum._record: this.CreateRecord(false); break;
                     case kwdNum._macro : this.CreateMacro(false); break;
                     case kwdNum._import: this.CreateImport(); break;
                     case kwdNum._class : this.CreateClass(false); break;
