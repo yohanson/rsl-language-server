@@ -556,6 +556,9 @@ export class CBase extends CAbstractBase {
             //запросим открытие такого файла
             let curAbsDir = path.dirname(fileURLToPath(this.textDocument.uri));
             let searchDir = path.relative(process.cwd(), curAbsDir);
+            if (nameInter.startsWith('"') && nameInter.endsWith('"')) {
+                nameInter = nameInter.substring(1, nameInter.length - 1);
+            }
             if (!nameInter.endsWith(".mac")) nameInter = nameInter + ".mac";
 
             let fullpath = nameInter;
