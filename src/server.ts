@@ -119,7 +119,7 @@ function FindObject(tdpp: TextDocumentPositionParams): IImport {
 connection.onInitialize((params: InitializeParams) => {
     let capabilities = params.capabilities;
     workFolderOpened = (params.rootPath != null)? true: false;
-    
+
     hasConfigurationCapability = !!(capabilities.workspace && !!capabilities.workspace.configuration);
     hasWorkspaceFolderCapability = !!(capabilities.workspace && !!capabilities.workspace.workspaceFolders);
     hasDiagnosticRelatedInformationCapability =
@@ -145,7 +145,7 @@ connection.onInitialize((params: InitializeParams) => {
 
 connection.onInitialized(() => {
     Imports   = new Array();
-    
+
     if (!workFolderOpened) connection.sendNotification("noRootFolder"); //не открыта папка, надо ругнуться
     if (hasConfigurationCapability) {
         connection.client.register(
@@ -227,7 +227,7 @@ export async function validateTextDocument(textDocument: TextDocument): Promise<
                 start: textDocument.positionAt(m.index),
                 end: textDocument.positionAt(m.index + m[0].length)
             },
-            message: `Определение ${m[0].toUpperCase()} устарело, от такого надо избавляться по возможности`,
+            message: `Определение ${m[0].toUpperCase()} устарело, от такого надо избавляться по возможности.\nRecord → TRecHandler\nArray → TArray`,
             source: 'RSL parser',
             tags: [ DiagnosticTag.Deprecated ],
         };
@@ -287,7 +287,7 @@ connection.onCompletion((tdpp: TextDocumentPositionParams): CompletionItem[] => 
     let document            : TextDocument           = getCurDoc(tdpp.textDocument.uri);
     let obj                 : IImport               = FindObject(tdpp);
     let curPos = document.offsetAt(tdpp.position);
-    
+
     if (isNotCommentOrString(tdpp))
     {
         if (obj != undefined) {     //нашли эту переменную

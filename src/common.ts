@@ -26,6 +26,7 @@ import { readFileSync, existsSync } from 'fs';
 import { convertIRange, convertToIRange } from './utils';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
+import { searchMacrofile } from './macrosearch';
 
 class CArray implements IArray{
     _it:Array<string>;
@@ -162,7 +163,7 @@ export class CVar extends CAbstractBase {
         this.objKind = isProperty ? CompletionItemKind.Property : (isConstant ? CompletionItemKind.Constant : CompletionItemKind.Variable);
         this.insertedText = name;
     }
-    setValue(value: string) : void {this.value = value;}    
+    setValue(value: string) : void {this.value = value;}
     updateCIInfo()          : void {
         this.detail = `${getStrItemKind(this.objKind)}: ${this.name}`;
         if (this.value.length > 0) this.detail += ` = ${this.value}`;
@@ -236,7 +237,7 @@ export class CBase extends CAbstractBase {
                 if (parent.range.end < position) {
                     answer.push(parent);
                 }
-                if (parent.isActual(position)) //пробуем взять только актуальные 
+                if (parent.isActual(position)) //пробуем взять только актуальные
                 {
                     if (parent.isObject())
                     {
@@ -554,17 +555,12 @@ export class CBase extends CAbstractBase {
         nameRanges.forEach(nameRange => {
             let nameInter = this.textDocument.getText(nameRange);
             //запросим открытие такого файла
-            let curAbsDir = path.dirname(fileURLToPath(this.textDocument.uri));
-            let searchDir = path.relative(process.cwd(), curAbsDir);
+            let currentFileDir = path.dirname(fileURLToPath(this.textDocument.uri));
             if (nameInter.startsWith('"') && nameInter.endsWith('"')) {
                 nameInter = nameInter.substring(1, nameInter.length - 1);
             }
-            if (!nameInter.endsWith(".mac")) nameInter = nameInter + ".mac";
 
-            let fullpath = nameInter;
-            if (searchDir.length) {
-                fullpath = searchDir + path.sep + nameInter;
-            }
+            let fullpath = searchMacrofile(currentFileDir, nameInter);
             if (!existsSync(fullpath)) {
                 let importError: Diagnostic = {
                     severity: DiagnosticSeverity.Error,
@@ -575,6 +571,7 @@ export class CBase extends CAbstractBase {
                 this.diagnostics.push(importError);
                 return;
             };
+            if (fullpath.endsWith('.d32')) return;
             let text = readFileSync(fullpath).toString();
             let uri = URI.file(path.resolve(fullpath)).toString();
             let textDocument = TextDocument.create(uri, 'rsl', 0, text);
