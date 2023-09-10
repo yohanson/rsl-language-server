@@ -525,14 +525,31 @@ export class CBase extends CAbstractBase {
         else {answer.first = true; answer.second = getTypeStr(typeNum);}
         return answer;
     }
+    protected parseArgs(src: string): Array<string> {
+        return src.split(',').map(function (arg) {return arg.trim()});
+    }
     protected     CreateMacro(isPrivate: boolean)   :void           {
         let isMethod = (this.ObjKind == CompletionItemKind.Class);
         let name: IToken = this.NextToken();
+        let args: Array<string>;
+        let token = this.NextToken();
+        if (token.str == '(') {
+            let closingBracket: IToken = this.NextToken();
+            while (closingBracket.str != ')') {
+                closingBracket = this.NextToken();
+            }
+            let rawArgs = this.textDocument.getText().substring(token.range.end, closingBracket.range.start);
+            args = this.parseArgs(rawArgs);
+        }
+        let returnType = 'variant';
+        if (this.NextToken().str == ':') {
+            returnType = this.NextToken().str;
+        }
         let range: Range = {
             start: this.textDocument.positionAt(name.range.start),
             end: this.getObjectBodyRange().end
         };
-        let macro: CMacro = new CMacro(this.textDocument, range, name.str, isPrivate, isMethod);
+        let macro: CMacro = new CMacro(this.textDocument, range, name.str, args, returnType, isPrivate, isMethod);
         this.addChild(macro);
     }
     protected     CreateClass(isPrivate: boolean)   : void {
@@ -582,7 +599,7 @@ export class CBase extends CAbstractBase {
         this.childs = new Array();
         this.Skip();
         let curToken: string;
-        const closeBracket = ")";
+        const closeBracket: string = ")";
         if (this.CurrentChar == "(") {
             let paramString: string = this.CurrentChar;
             this.Next();
@@ -590,7 +607,7 @@ export class CBase extends CAbstractBase {
             curToken = this.NextToken().str;
             if (curToken != ")") {
                 this.offset = savePos;
-                while (this.CurrentChar != closeBracket.toString() && !this.End) {
+                while (this.CurrentChar != closeBracket && !this.End) {
                     paramString += this.CurrentChar;
                     this.Next();
                 }
@@ -650,17 +667,23 @@ export class CBase extends CAbstractBase {
 
 /** Базовый класс для макросов*/
 class CMacro extends CBase {
+    protected returnType: string;
+    protected args: Array<string>;
 
-    constructor(textDocument: TextDocument, range: Range, name: string, isPrivate: boolean, isMethod: boolean) {
+    constructor(textDocument: TextDocument, range: Range, name: string, args: Array<string>, returnType: string, isPrivate: boolean, isMethod: boolean) {
         super(textDocument, range, isMethod ? CompletionItemKind.Method : CompletionItemKind.Function);
         this.name = name;
+        this.setType(returnType);
+        this.args = args;
         this.isPrivate = isPrivate;
         this.range = convertToIRange(textDocument, range);
         this.insertedText = `${name}()`;
     }
     updateCIInfo(): void {
-        this.detail = `${getStrItemKind(this.objKind)}: `;
-        this.detail += `${this.name}${this.paramStr}.\nВозвращаемый тип: ${this.Type}`;
+        this.detail = `*${getStrItemKind(this.objKind)}*\n`;
+        this.detail += `macro **${this.name}**(`;
+        this.detail += this.args.map(function(arg){return arg.replace(/(\S+)\s*:\s*(\S+)/, '`$1`: *$2*')}).join(',  ') + ')';
+        this.detail += `: *${this.Type}*`;
     }
 }
 /** Базовый класс для классов*/
