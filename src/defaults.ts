@@ -33,13 +33,13 @@ export class ArrayClass {
  * Возвращает дефолтные функции, классы, переменные
  */
 export function getDefaults() {	return DefaultsArray; }
-export function getCIInfoForArray(inputArr: ArrayClass):Array<CompletionItem> {
-    let CIArray:Array<CompletionItem> = new Array();
-    let CNodeArray:Array<CNode> = inputArr.getChilds();
-    CNodeArray.forEach(element => {
-        CIArray.push(element.CIInfo())
+export function getCompletionInfoForArray(inputArr: ArrayClass):Array<CompletionItem> {
+    let completions: Array<CompletionItem> = new Array();
+    let children: Array<CNode> = inputArr.getChilds();
+    children.forEach(child => {
+        completions.push(child.CompletionInfo())
     });
-    return CIArray;
+    return completions;
 }
 
 /**
@@ -54,7 +54,7 @@ let TBfile: CNodeClass = new CNodeClass(
     "TBFile",
     "tbfile",
     "Класс TBFile",
-    {kind: MarkupKind.Markdown, value: "Стандартный класс ```TBfile``` предназначен для работы с таблицами баз данных и представляет собой объектную альтернативу стандартной конструкции языка FILE."},
+    {kind: MarkupKind.Markdown, value: "Стандартный класс `TBfile` предназначен для работы с таблицами баз данных и представляет собой объектную альтернативу стандартной конструкции языка FILE."},
     "TBfile ( ${1:TableName}${2:[, AttrStr]}${3:[, KeyNum]}${4:[, FileName]}${5:[, DicName]} ); $0" /*подставляемый текст*/
 );
 
@@ -68,7 +68,7 @@ TBfile.addChild(new CNodeFunc(
     "Update",
     "integer",
     "Метод класса TBFile: bFile.Update();",
-	{kind: MarkupKind.Markdown, value: "Процедура обновляет текущую запись в файле ```id```, используя значения полей из буфера данных."},
+	{kind: MarkupKind.Markdown, value: "Процедура обновляет текущую запись в файле `id`, используя значения полей из буфера данных."},
     "Update (${1:id}${2:[, size]}${3:[, bool]})$0",
     InsertTextFormat.Snippet,
     CompletionItemKind.Method
@@ -90,7 +90,7 @@ TBfile.addChild(new CNodeFunc(
     "integer",
     "Метод класса TBFile: bFile.ReWind();",
 	{kind: MarkupKind.Markdown, value: "Процедура переустанавливает таблицу или файл таким образом, что текущая позиция не изменяется,\
-	 но изменяется поведение вызванных после ```rewind``` процедур ```next``` или ```prev```: ```next``` извлечет первую запись, а ```prev``` – последнюю."},
+	 но изменяется поведение вызванных после `rewind` процедур `next` или `prev`: `next` извлечет первую запись, а `prev` – последнюю."},
     "ReWind()$0",
     InsertTextFormat.Snippet,
     CompletionItemKind.Method
@@ -100,7 +100,7 @@ TBfile.addChild(new CNodeFunc(
     "Prev",
     "integer",
     "Метод класса TBFile: bFile.Prev();",
-    {kind: MarkupKind.Markdown, value: "Процедура считывает из таблицы или файла предыдущую запись или последнюю, если вызывается после процедуры ```rewind```."},
+    {kind: MarkupKind.Markdown, value: "Процедура считывает из таблицы или файла предыдущую запись или последнюю, если вызывается после процедуры `rewind`."},
     "Prev()$0",
     InsertTextFormat.Snippet,
     CompletionItemKind.Method
@@ -110,7 +110,7 @@ TBfile.addChild(new CNodeFunc(
     "Next",
     "integer",
     "Метод класса TBFile: bFile.Next();",
-    {kind: MarkupKind.Markdown, value: "Процедура считывает из таблицы или файла следующую за текущей запись или первую запись, если вызывается после процедуры ```rewind```."},
+    {kind: MarkupKind.Markdown, value: "Процедура считывает из таблицы или файла следующую за текущей запись или первую запись, если вызывается после процедуры `rewind`."},
     "Next()$0",
     InsertTextFormat.Snippet,
     CompletionItemKind.Method
@@ -190,7 +190,7 @@ TBfile.addChild(new CNode(
     "Rec",
     "variable",
     "Свойство класса TBFile: bFile.Rec",
-    {kind: MarkupKind.Markdown, value: "Ссылка на объект типа ```RECORD```, при обращении к которому осуществляется доступ к полям записи."},
+    {kind: MarkupKind.Markdown, value: "Ссылка на объект типа `RECORD`, при обращении к которому осуществляется доступ к полям записи."},
     "Rec.$0"
     ));
 
@@ -213,7 +213,7 @@ let TArray: CNodeClass = new CNodeClass(
     "TArray",
     "tarray",
     "Класс TArray",
-    {kind: MarkupKind.Markdown, value: "Стандартный класс TArray языка RSL используется для реализации динамического массива. Динамический массив ```TArray``` представляет собой объектную альтернативу стандартной конструкции языка ```ARRAY```. "},
+    {kind: MarkupKind.Markdown, value: "Стандартный класс TArray языка RSL используется для реализации динамического массива. Динамический массив `TArray` представляет собой объектную альтернативу стандартной конструкции языка `ARRAY`. "},
     "TArray ($0);" /*подставляемый текст*/
 );
 
@@ -221,7 +221,7 @@ TArray.addChild(new CNode(
     "MarshalByVal",
     "bool",
     "Свойство класса TArray",
-    {kind: MarkupKind.Markdown, value: "Определяет, каким образом объекты этого класса передаются в RSCOM. Если свойству присвоено значение TRUE, то объекты передаются по значению. По умолчанию свойство имеет значение FALSE, и, соответственно, объекты класса ```TArray по умолчанию передаются по ссылке.```"},
+    {kind: MarkupKind.Markdown, value: "Определяет, каким образом объекты этого класса передаются в RSCOM. Если свойству присвоено значение TRUE, то объекты передаются по значению. По умолчанию свойство имеет значение FALSE, и, соответственно, объекты класса `TArray по умолчанию передаются по ссылке.`"},
     "MarshalByVal(${1|true,false|});$0"
     ));
 
@@ -229,7 +229,7 @@ TArray.addChild(new CNodeFunc(
     "Sort",
     "integer",
     "Метод класса TArray",
-    {kind: MarkupKind.Markdown, value: "Выполняет сортировку массива ```в соответствии с порядком```, определяемым пользовательским обработчиком. В случае успешного завершения возвращает ```TRUE```. При неудаче – ```FALSE```. Причиной неудачи могут быть неверно заданные параметры."},
+    {kind: MarkupKind.Markdown, value: "Выполняет сортировку массива `в соответствии с порядком`, определяемым пользовательским обработчиком. В случае успешного завершения возвращает `TRUE`. При неудаче – `FALSE`. Причиной неудачи могут быть неверно заданные параметры."},
     "Sort(${1:callback}, ${2:data});$0"
     ));
 
@@ -243,7 +243,7 @@ let func: CNodeFunc = new CNodeFunc(
     "GetInt",
     "integer",
     "Функция GetInt ( id [, prompt, len [, hide ] ] )",
-    {kind: MarkupKind.Markdown, value: "Процедура присваивает введенное пользователем значение переменной типа Integer с именем ```id```. По умолчанию ширина поля ввода равна 12 символам."},
+    {kind: MarkupKind.Markdown, value: "Процедура присваивает введенное пользователем значение переменной типа Integer с именем `id`. По умолчанию ширина поля ввода равна 12 символам."},
     "GetInt ( ${1:id} ${2:, prompt, len ${3:, hide}} );$0" /*подставляемый текст*/
 );
 DefaultsArray.push(func);
@@ -252,7 +252,7 @@ func = new CNodeFunc(
     "GetDouble",
     "double",
     "Функция GetDouble ( id [, prompt, len [, hide [, pos ] ] ] )",
-    {kind: MarkupKind.Markdown, value: "Процедура присваивает введенное пользователем значение переменной типа Double с именем ```id```. По умолчанию ширина поля ввода равна 24 символам."},
+    {kind: MarkupKind.Markdown, value: "Процедура присваивает введенное пользователем значение переменной типа Double с именем `id`. По умолчанию ширина поля ввода равна 24 символам."},
     "GetDouble ( ${1:id} ${2:, prompt, len ${3:, hide ${4:, pos}}});$0" /*подставляемый текст*/
 );
 DefaultsArray.push(func);

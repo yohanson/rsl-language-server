@@ -1,4 +1,4 @@
-import { CompletionItemKind, InsertTextFormat, CompletionItem, Location } from 'vscode-languageserver';
+import { CompletionItemKind, InsertTextFormat, CompletionItem, Location, MarkupContent, MarkupKind } from 'vscode-languageserver';
 import { varType } from './enums';
 import { CBase } from './common';
 /**
@@ -87,7 +87,7 @@ export abstract class CAbstractBase {
 /**
  * Описание для автодополнения
  */
-    protected description     : string;
+    protected description     : MarkupContent;
 /**
  * Верхняя строка описания для автодополнения
  */
@@ -106,7 +106,7 @@ export abstract class CAbstractBase {
         this.range           = {start: 0, end: 0};
         this.objKind         = CompletionItemKind.Unit;
         this.varType_        = "variant";
-        this.description     = "";
+        this.description     = {kind: MarkupKind.Markdown, value: ''};
         this.detail          = "";
         this.insertedText    = "";
     }
@@ -146,12 +146,12 @@ export abstract class CAbstractBase {
 /**
  * Возвращает инфо объекта для автодополнения
  */
-    abstract updateCIInfo();
+    abstract updateCompletionInfo();
 /**
  * Возвращает инфо объекта для автодополнения
  */
-    get CIInfo(): CompletionItem {
-        this.updateCIInfo();
+    get CompletionInfo(): CompletionItem {
+        this.updateCompletionInfo();
         return {
             label: this.name,
             documentation: this.description,
@@ -175,7 +175,7 @@ export abstract class CAbstractBase {
 /**
  * Устанавливает описание для автодополнения
  */
-    Description(desc: string) {this.description = desc}
+    Description(desc: string) {this.description.value = desc}
 /**
  * Рекурсивный поиск внутри объекта
  */

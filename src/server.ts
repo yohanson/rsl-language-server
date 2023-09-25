@@ -10,6 +10,8 @@ import {
     Hover,
     InitializeParams,
     Location,
+    MarkupContent,
+    MarkupKind,
     Position,
     ProposedFeatures,
     Range,
@@ -23,7 +25,7 @@ import {
 } from 'vscode-languageserver-textdocument';
 
 import { IImport, IRslSettings, IToken} from  './interfaces';
-import { getDefaults, getCIInfoForArray } from './defaults';
+import { getDefaults, getCompletionInfoForArray } from './defaults';
 
 import { CBase } from './common';
 import { getSymbols } from './docsymbols';
@@ -306,7 +308,14 @@ connection.onCompletion((tdpp: TextDocumentPositionParams): CompletionItem[] => 
                     if (objClass != undefined) break;
                 }
                 if (objClass != undefined){
-                    CompletionItemArray = objClass.ChildsCIInfo(true); //получим всю информацию о детях
+                    CompletionItemArray = objClass.ChildsCompletionInfo(true); //получим всю информацию о детях
+                } else {
+                    // Searching in predefined defaults
+                    for (const defType of getDefaults().getChilds()) {
+                        if (obj.object.Type == defType.returnType()) {
+                            return defType.ChildsCompletionInfo();
+                        }
+                    };
                 }
             }
         }
@@ -315,10 +324,10 @@ connection.onCompletion((tdpp: TextDocumentPositionParams): CompletionItem[] => 
             Imports.forEach(element => {
                     let actualChilds = element.object.getActualChilds(element.uri == tdpp.textDocument.uri? curPos: 0);
                     for (const child of actualChilds) {
-                        CompletionItemArray.push(child.CIInfo);
+                        CompletionItemArray.push(child.CompletionInfo);
                     }
             });
-            CompletionItemArray = CompletionItemArray.concat(getCIInfoForArray(getDefaults())); //все дефолтные классы, функции и переменные
+            CompletionItemArray = CompletionItemArray.concat(getCompletionInfoForArray(getDefaults())); //все дефолтные классы, функции и переменные
         }
     }
     return CompletionItemArray;
@@ -334,10 +343,15 @@ connection.onHover((tdpp: TextDocumentPositionParams): Hover => {
         let obj      : IImport     = FindObject(tdpp);
         let token    : IToken       = getCurObj(tdpp.textDocument.uri).getCurrentToken(document.offsetAt(tdpp.position));
         if (obj != undefined) {
-            let CIInfo = obj.object.CIInfo;
-            let comment:string = (CIInfo.documentation.toString().length > 0)? `\r\n${CIInfo.documentation.toString()}`: "";
+            let completionInfo = obj.object.CompletionInfo;
+            let contents: MarkupContent = {kind: MarkupKind.Markdown, value: completionInfo.detail};
+            if (typeof completionInfo.documentation === 'object') {
+                contents.value += completionInfo.documentation.value;
+            } else {
+                contents.value += completionInfo.documentation;
+            }
             hover = {
-                contents: `${CIInfo.detail}${comment}`,
+                contents: contents,
                 range : { start: document.positionAt(token.range.start),
                           end  : document.positionAt(token.range.end) }
             }

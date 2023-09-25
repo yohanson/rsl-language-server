@@ -10,6 +10,8 @@ import {
     Diagnostic,
     DiagnosticSeverity,
     Range,
+    MarkupContent,
+    MarkupKind,
 } from 'vscode-languageserver/node';
 
 import {
@@ -19,7 +21,7 @@ import {
 import { URI } from 'vscode-uri';
 
 import { DEFAULT_WHITESPACES, LINEBREAKS, STOP_CHARS, varType, kwdNum, SkipComment, intersNum, OLC, MLC_O, MLC_C, DIGITS } from './enums';
-import { ArrayClass, getDefaults, getCIInfoForArray } from './defaults'
+import { ArrayClass, getDefaults, getCompletionInfoForArray } from './defaults'
 import { getTree, validateTextDocument } from './server';
 import { IImport, If_s, IArray, IRange, CAbstractBase, IToken } from './interfaces';
 import { readFileSync, existsSync } from 'fs';
@@ -164,10 +166,9 @@ export class CVar extends CAbstractBase {
         this.insertedText = name;
     }
     setValue(value: string) : void {this.value = value;}
-    updateCIInfo()          : void {
-        this.detail = `${getStrItemKind(this.objKind)}: ${this.name}`;
+    updateCompletionInfo(): void {
+        this.detail = `${getStrItemKind(this.objKind)}: ${this.name}: ${this.varType_}`;
         if (this.value.length > 0) this.detail += ` = ${this.value}`;
-        this.detail += `,\nтип ${this.varType_}`;
     }
     isActual(pos: number)   : boolean { return (this.range.end < pos) }
     reParsing()             : void {}
@@ -196,7 +197,7 @@ export class CBase extends CAbstractBase {
         this.parse();
     }
 
-    updateCIInfo(): void {}
+    updateCompletionInfo(): void {}
 
     getTextDocument(): TextDocument { return this.textDocument}
 
@@ -263,6 +264,9 @@ export class CBase extends CAbstractBase {
         if (offset > 0) {
             this.SavePos();
             this.offset = offset;
+            if (this.IsStopChar()) {
+                this.offset--;
+            }
             if (!DEFAULT_WHITESPACES.includes(this.CurrentChar)) {
                 if (this.CurrentChar === ".") this.offset--;
                 while (!this.IsStopChar() && this.CurrentChar != undefined) {
@@ -276,28 +280,28 @@ export class CBase extends CAbstractBase {
         return res;
     }
 
-    ChildsCIInfo(isCheckPrivate: boolean = false, position: number = 0, isCheckActual: boolean = false): Array<CompletionItem> {
+    ChildsCompletionInfo(isCheckPrivate: boolean = false, position: number = 0, isCheckActual: boolean = false): Array<CompletionItem> {
         let answer: Array<CompletionItem> = new Array();
-        this.childs.forEach(element => {
+        this.childs.forEach(child => {
             if (isCheckActual) {
-                if (element.Range.end < position) {
+                if (child.Range.end < position) {
                     if (isCheckPrivate) {
-                        if (!element.Private) answer.push(element.CIInfo);
+                        if (!child.Private) answer.push(child.CompletionInfo);
                     }
-                    else answer.push(element.CIInfo);
+                    else answer.push(child.CompletionInfo);
                 }
-                else if (element.isActual(position)) {
-                    let CIArr = element.ChildsCIInfo();
-                    CIArr.forEach(element => {
-                        answer.push(element);
+                else if (child.isActual(position)) {
+                    let completions = child.ChildsCompletionInfo();
+                    completions.forEach(completion => {
+                        answer.push(completion);
                     });
                 }
             }
             else
                 if (isCheckPrivate) {
-                    if (!element.Private) answer.push(element.CIInfo);
+                    if (!child.Private) answer.push(child.CompletionInfo);
                 }
-                else answer.push(element.CIInfo);
+                else answer.push(child.CompletionInfo);
         });
         if (this.ObjKind === CompletionItemKind.Class){
             let cast: CClass = <CClass>(<unknown>this); //пытаюсь преобразовать из базового типа в тот который должен быть
@@ -313,7 +317,7 @@ export class CBase extends CAbstractBase {
                 {
                     parent.childs.forEach(child=>{
                         if (!child.Private)
-                            answer.push(child.CIInfo);
+                            answer.push(child.CompletionInfo);
                     });
                 }
             }
@@ -679,11 +683,13 @@ class CMacro extends CBase {
         this.range = convertToIRange(textDocument, range);
         this.insertedText = `${name}()`;
     }
-    updateCIInfo(): void {
-        this.detail = `*${getStrItemKind(this.objKind)}*\n`;
-        this.detail += `macro **${this.name}**(`;
-        this.detail += this.args.map(function(arg){return arg.replace(/(\S+)\s*:\s*(\S+)/, '`$1`: *$2*')}).join(',  ') + ')';
-        this.detail += `: *${this.Type}*`;
+    updateCompletionInfo(): void {
+        this.detail = getStrItemKind(this.objKind);
+        this.description.value =
+            "\n```rsl\n"
+            + `macro ${this.name}(` + this.args.join(', ') + `): ${this.Type}`
+            + "\n```\n"
+        ;
     }
 }
 /** Базовый класс для классов*/
@@ -704,9 +710,8 @@ class CClass extends CBase {
     }
     getParentName():string {return this.parentName;}
 
-    updateCIInfo():void {
-        this.detail = `${getStrItemKind(this.objKind)}: `;
-        this.detail += this.name;
+    updateCompletionInfo():void {
+        this.detail = `${getStrItemKind(this.objKind)}: ` + this.name;
     }
 }
 

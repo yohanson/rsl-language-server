@@ -33,7 +33,7 @@ export class CNode {
    public Name () {return this._name}
    public returnType ():string {return this._retType}
    public Info(): ObjInfo {return {name: this._name, valueType: this._retType}}
-   public CIInfo(): CompletionItem {return {label: this._name, documentation: this._description, insertTextFormat: this._descFormat, kind: this._objKind, detail: this._detail, insertText: this._insertedText}}
+   public CompletionInfo(): CompletionItem {return {label: this._name, documentation: this._description, insertTextFormat: this._descFormat, kind: this._objKind, detail: this._detail, insertText: this._insertedText}}
    public addChild(node:CNode): void { this._childs.push(node)}
    public ChildsInfo(): Array<ObjInfo> {
       let InfoArray :Array<ObjInfo> = new Array();
@@ -42,12 +42,12 @@ export class CNode {
       });
       return InfoArray;
    }
-   public ChildsCIInfo(): Array<CompletionItem> {
-      let CIInfoArray :Array<CompletionItem> = new Array();
+   public ChildsCompletionInfo(): Array<CompletionItem> {
+      let CompletionInfoArray :Array<CompletionItem> = new Array();
       this._childs.forEach(element => {
-         CIInfoArray.push(element.CIInfo())
+         CompletionInfoArray.push(element.CompletionInfo())
       });
-      return CIInfoArray;
+      return CompletionInfoArray;
    }
 }
 
