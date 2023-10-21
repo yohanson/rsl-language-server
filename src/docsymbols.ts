@@ -1,12 +1,12 @@
-import { CBase } from './common';
+import { RslEntityWithBody } from './common';
 import {
   CompletionItemKind,
   TextDocument,
   SymbolInformation
 } from 'vscode-languageserver';
-import { fromCompletionItemKind, convertIRange } from './utils';
+import { fromCompletionItemKind, convertToRange } from './utils';
 
-function getSymbolName(node: CBase) {
+function getSymbolName(node: RslEntityWithBody) {
   const nodeType = node.ObjKind !== CompletionItemKind.Class ? node.Type : '';
   const typeDelim = nodeType ? ': ' : '';
 
@@ -27,8 +27,8 @@ function isScope(k: CompletionItemKind) {
 
 export function getSymbols(
   document: TextDocument,
-  node: CBase,
-  parent?: CBase
+  node: RslEntityWithBody,
+  parent?: RslEntityWithBody
 ): (SymbolInformation | undefined)[] {
   let info: SymbolInformation | undefined;
 
@@ -38,7 +38,7 @@ export function getSymbols(
    * методы и свойства внутри классов
    */
   if (
-    node.isObject() || // функция или класс
+    node.canHaveChildren() || // функция или класс
     parent?.ObjKind === CompletionItemKind.Class ||
     parent?.ObjKind === CompletionItemKind.Unit // var в классе или в глобальном scope
   ) {
@@ -46,7 +46,7 @@ export function getSymbols(
       info = {
         kind: fromCompletionItemKind(node.ObjKind),
         location: {
-          range: convertIRange(document, node.Range),
+          range: convertToRange(document, node.Range),
           uri: document.uri
         },
         name: getSymbolName(node),
@@ -58,9 +58,11 @@ export function getSymbols(
   }
 
   const innerSymbols = isScope(node.ObjKind)
-    ? node.getChilds().reduce((symbols, child) => {
-        const syms = getSymbols(document, child, node);
-        symbols.push(...syms);
+    ? node.getChildren().reduce((symbols, child) => {
+        if (child instanceof RslEntityWithBody) {
+            const syms = getSymbols(document, child, node);
+            symbols.push(...syms);
+        }
         return symbols;
       }, [])
     : [];

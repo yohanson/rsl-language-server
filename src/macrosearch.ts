@@ -2,7 +2,7 @@
 import { existsSync } from 'fs';
 import * as path from 'path';
 
-let rsbankMacroDirs = [
+const rsbankMacroDirs = [
     '../obj',
     'cb',
     'dlng',
@@ -100,6 +100,19 @@ let rsbankMacroDirs = [
     'reptreg/634',
     'Loans/CRD/Limit',
 ];
+const rsbankInters = [
+    'MmarkInter',
+    'FXInter',
+
+    'LoansFind',
+    'LoansGlobalData',
+    'LoansGUI',
+    'LoansList',
+    'SbCrdInter',
+    'ПроцентыБухгалтер',
+
+
+];
 
 function getMacDir(path: string): string {
     let matches = path.match(/^(.*[\\/]mac)([\\/]|$)/i);
@@ -124,7 +137,7 @@ export function searchMacrofile(currentFileDir: string, macro: string): string {
         } else {
             basepath = rootDir + path.sep + macro;
         }
-        
+
         let extensions = hasExtension ? [''] : ['.mac', '.d32'];
         for (const ext of extensions) {
             let fullpath = basepath + ext

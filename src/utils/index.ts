@@ -6,7 +6,7 @@ import {
 } from 'vscode-languageserver';
 import { IRange } from '../interfaces';
 
-export function convertIRange(doc: TextDocument, rng: IRange): Range {
+export function convertToRange(doc: TextDocument, rng: IRange): Range {
   return {
     start: doc.positionAt(rng.start),
     end: doc.positionAt(rng.end)

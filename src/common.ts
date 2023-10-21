@@ -23,12 +23,13 @@ import { URI } from 'vscode-uri';
 import { DEFAULT_WHITESPACES, LINEBREAKS, STOP_CHARS, varType, kwdNum, SkipComment, intersNum, OLC, MLC_O, MLC_C, DIGITS } from './enums';
 import { ArrayClass, getDefaults, getCompletionInfoForArray } from './defaults'
 import { getTree, validateTextDocument } from './server';
-import { IImport, If_s, IArray, IRange, CAbstractBase, IToken } from './interfaces';
+import { IImport, If_s, IArray, IRange, RslEntity, IToken } from './interfaces';
 import { readFileSync, existsSync } from 'fs';
-import { convertIRange, convertToIRange } from './utils';
+import { convertToRange, convertToIRange } from './utils';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
 import { searchMacrofile } from './macrosearch';
+import { exit } from 'process';
 
 class CArray implements IArray{
     _it:Array<string>;
@@ -154,58 +155,65 @@ let TYPES:Ctypes = new Ctypes();
 let KEYWORDS:Ckeywords = new Ckeywords();
 let STR_ITEM_KIND:Cstr_item_kind = new Cstr_item_kind();
 
-export class CVar extends CAbstractBase {
+export class CVar extends RslEntity {
     private value: string;
 
-    constructor(name: string, privateFlag: boolean, isConstant: boolean, isProperty: boolean) {
-        super();
+    constructor(textDocument: TextDocument, name: string, privateFlag: boolean, isConstant: boolean, isProperty: boolean, type: string) {
+        super(textDocument);
         this.value = "";
         this.name = name;
+        this.setType(type);
         this.isPrivate = privateFlag;
         this.objKind = isProperty ? CompletionItemKind.Property : (isConstant ? CompletionItemKind.Constant : CompletionItemKind.Variable);
         this.insertedText = name;
     }
     setValue(value: string) : void {this.value = value;}
     updateCompletionInfo(): void {
-        this.detail = `${getStrItemKind(this.objKind)}: ${this.name}: ${this.varType_}`;
+        if (this.objKind == CompletionItemKind.Constant) {
+            this.detail = 'const ';
+        } else {
+            this.detail = `${getStrItemKind(this.objKind)}: `
+        }
+        this.detail += this.name;
+        if (this.varType_) {
+            this.detail += `: ${this.varType_}`;
+        }
         if (this.value.length > 0) this.detail += ` = ${this.value}`;
     }
     isActual(pos: number)   : boolean { return (this.range.end < pos) }
-    reParsing()             : void {}
+    reParse()             : void {}
 }
 /** Родительский класс для файлов, макросов и классов*/
-export class CBase extends CAbstractBase {
-    protected childs      : Array<CBase>;
-    protected textDocument: TextDocument;
-    protected source      : string;
-    protected paramStr    : string;
+export class RslEntityWithBody extends RslEntity {
+    protected children: Array<RslEntity>;
+    protected paramStr: string;
     /** Номер символа от начала файла */
-    protected offset      : number;
-    protected savedPos    : number;
+    protected offset: number;
+    protected savedPos: number;
     protected diagnostics: Array<Diagnostic>;
 
     constructor(textDocument: TextDocument, range: Range, objKind:CompletionItemKind = CompletionItemKind.Unit, diagnostics: Array<Diagnostic> = []) {
-        super();
-        this.childs         = new Array();
-        this.textDocument   = textDocument;
-        this.source         = this.textDocument.getText(range);
-        this.paramStr       = "";
-        this.savedPos       = 0;
-        this.offset         = this.textDocument.offsetAt(range.start);
-        this.objKind        = objKind;
+        super(textDocument);
+        this.range = convertToIRange(textDocument, range);
+        this.children = new Array();
+        this.textDocument = textDocument;
+        this.paramStr = "";
+        this.savedPos = 0;
+        this.offset = this.textDocument.offsetAt(range.start);
+        this.objKind = objKind;
         this.diagnostics = diagnostics;
-        this.parse();
+        this.parseBody();
     }
 
     updateCompletionInfo(): void {}
 
-    getTextDocument(): TextDocument { return this.textDocument}
+    isActual(pos: number): boolean {
+        return (this.range.start < pos && pos < this.range.end);
+    }
 
-    isActual(pos: number): boolean { return (this.range.start < pos && pos < this.range.end) }
-
-    RecursiveFind(name: string): CBase {
-        let Obj: CBase = undefined;
-        for (const iterator of this.childs) {
+    RecursiveFind(name: string): RslEntity {
+        let Obj: RslEntity = undefined;
+        for (const iterator of this.children) {
             if (iterator.Name.toLowerCase() == name.toLowerCase()) Obj = iterator;
             else if (Obj == undefined) Obj = iterator.RecursiveFind(name);
             if (Obj != undefined) break;
@@ -213,9 +221,19 @@ export class CBase extends CAbstractBase {
         return Obj;
     }
 
-    reParsing() { this.offset = 0; this.parse(); }
-    getChilds() { return this.childs; }
-    addChild(node: any) { this.childs.push(node); }
+    reParse() {
+        this.offset = 0;
+        this.parseBody();
+    }
+    getChildren() { return this.children; }
+    addChild(node: RslEntity) {
+        this.children.push(node);
+    }
+    addChildren(children: Array<RslEntity>) {
+        children.forEach(child => {
+            this.addChild(child);
+        });
+    }
     setType(type: string) { this.varType_ = type }
 
     ProcessImportNames(): Range[] {
@@ -224,25 +242,27 @@ export class CBase extends CAbstractBase {
         let delimiter: IToken;
         do {
             token = this.NextToken();
-            names.push(convertIRange(this.textDocument, token.range));
+            names.push(convertToRange(this.textDocument, token.range));
             delimiter = this.NextToken();
         } while (delimiter.str != ';');
         return names;
     }
 
-    getActualChilds(position: number):Array<CBase> {
-        let answer: Array<CBase> = new Array();
+    getActualChilds(position: number):Array<RslEntity> {
+        let answer: Array<RslEntity> = new Array();
         if (position != 0) //Ищем в текущем файле
         {
-            this.childs.forEach(parent => {
-                if (parent.range.end < position) {
+            this.children.forEach(parent => {
+                if (parent.Range.start < position) {
                     answer.push(parent);
                 }
                 if (parent.isActual(position)) //пробуем взять только актуальные
                 {
-                    if (parent.isObject())
+                    if (parent instanceof RslEntityWithBody)
                     {
-                        parent.childs.forEach(child=>{
+                        console.warn("Parent (" + parent.name + ") has " + parent.children.length + " children:");
+                        parent.children.forEach(child => {
+                            console.warn("Child: " + child.Name);
                             answer.push(child);
                         })
                     }
@@ -251,7 +271,7 @@ export class CBase extends CAbstractBase {
         }
         else //ищем в другом файле, надо выдать все не приватные элементы
         {
-            this.childs.forEach(parent => {
+            this.children.forEach(parent => {
                 if (!parent.Private)
                     answer.push(parent);
             });
@@ -282,7 +302,7 @@ export class CBase extends CAbstractBase {
 
     ChildsCompletionInfo(isCheckPrivate: boolean = false, position: number = 0, isCheckActual: boolean = false): Array<CompletionItem> {
         let answer: Array<CompletionItem> = new Array();
-        this.childs.forEach(child => {
+        this.children.forEach(child => {
             if (isCheckActual) {
                 if (child.Range.end < position) {
                     if (isCheckPrivate) {
@@ -296,16 +316,17 @@ export class CBase extends CAbstractBase {
                         answer.push(completion);
                     });
                 }
-            }
-            else
+            } else {
                 if (isCheckPrivate) {
                     if (!child.Private) answer.push(child.CompletionInfo);
+                } else {
+                    answer.push(child.CompletionInfo);
                 }
-                else answer.push(child.CompletionInfo);
+            }
         });
         if (this.ObjKind === CompletionItemKind.Class){
             let cast: CClass = <CClass>(<unknown>this); //пытаюсь преобразовать из базового типа в тот который должен быть
-            let parent:CBase;
+            let parent:RslEntity;
             if (cast.getParentName().length)
             {
                 for (const iterator of getTree())
@@ -315,7 +336,7 @@ export class CBase extends CAbstractBase {
                 }
                 if (parent != undefined)
                 {
-                    parent.childs.forEach(child=>{
+                    parent.getChildren().forEach(child=>{
                         if (!child.Private)
                             answer.push(child.CompletionInfo);
                     });
@@ -325,7 +346,16 @@ export class CBase extends CAbstractBase {
         return answer;
     }
     protected     getKeywordNum(token: string): If_s<number> { return KEYWORDS.is(token.toLowerCase()); }
-    protected     charAt(index: number)       : string    { return index < this.source.length ? this.source[index] : ""; }
+
+    protected charAt(index: number): string {
+        if (index + 1 >= this.range.end) {
+            return "";
+        }
+        let range = {start: this.textDocument.positionAt(index), end: this.textDocument.positionAt(index+1)};
+        return this.textDocument.getText(range);
+    }
+
+    protected get line(): number { return this.textDocument.positionAt(this.offset).line; }
     protected get CurrentChar()               : string    { return this.charAt(this.offset); }
     protected get Pos()                       : number    { return this.offset; }
     protected get End()                       : boolean   { return this.CurrentChar == ""; }
@@ -340,8 +370,12 @@ export class CBase extends CAbstractBase {
         let indent: number = 1;
         while (indent !== 0 && !this.End) {
             token = this.NextToken().str;
-            if (tokensWithEnd.is(token).first) indent++;
-            else if (token.toLowerCase() == "end") indent--;
+            if (tokensWithEnd.is(token).first) {
+                indent++;
+            }
+            else if (token.toLowerCase() == "end") {
+                indent--;
+            }
         }
         let range: Range = {start: this.textDocument.positionAt(savePos), end: this.textDocument.positionAt(this.Pos)};
         return range;
@@ -404,14 +438,13 @@ export class CBase extends CAbstractBase {
     }
     protected CreateRecord(isPrivate: boolean = false, isConstant: boolean = false) {
         let name = this.NextToken();
-        let record = new CVar(name.str, isPrivate, isConstant, false);
+        let record = new CVar(this.textDocument, name.str, isPrivate, isConstant, false, "record");
         record.setRange(name.range);
-        record.setType("record");
         this.addChild(record);
     }
-    protected     CreateVariable(isPrivate: boolean, isConstant: boolean = false) {
+    protected parseVariable(isPrivate: boolean, isConstant: boolean = false) {
         let token: IToken = this.NextToken();
-        let varObject: CVar = new CVar(token.str, isPrivate, isConstant, this.ObjKind === CompletionItemKind.Class);
+        let varObject: CVar = new CVar(this.textDocument, token.str, isPrivate, isConstant, this.ObjKind === CompletionItemKind.Class, '');
         varObject.setRange({start: token.range.start, end: token.range.end});
         token = this.NextToken();
         let stop: boolean = false;
@@ -447,8 +480,8 @@ export class CBase extends CAbstractBase {
                         comment = (token.str == OLC) ? this.GetOLC() : this.GetMLC();
                         varObject.Description(comment);
                     }
-                    if (sToken == ",") this.CreateVariable(isPrivate, isConstant);
-                    stop = true;
+                    if (sToken == ",") this.parseVariable(isPrivate, isConstant);
+                    if (sToken == ";") stop = true;
                 } break;
             }
             if (!stop) token = this.NextToken();
@@ -505,7 +538,7 @@ export class CBase extends CAbstractBase {
             }
             else {//надо поискать в именах объявленных и импортированных классов и функций FIXME: переделать
                 let baseObject: Array<IImport> = getTree();
-                let obj: CAbstractBase;
+                let obj: RslEntity;
                 if (baseObject != undefined) {
                     for (const iterator of baseObject) {
                         obj = iterator.object.RecursiveFind(token); //FIXME: убрать рекурсивный поиск
@@ -529,34 +562,58 @@ export class CBase extends CAbstractBase {
         else {answer.first = true; answer.second = getTypeStr(typeNum);}
         return answer;
     }
-    protected parseArgs(src: string): Array<string> {
-        return src.split(',').map(function (arg) {return arg.trim()});
+    // start after opening parenthesis
+    protected parseArgs(): Array<CVar> {
+        if (this.charAt(this.offset - 1) != "(") {
+            console.warn(this.textDocument.uri.valueOf() + ":" + (this.textDocument.positionAt(this.Pos).line + 1) + " parseArgs called not on '('!");
+            return [];
+        }
+        let start = this.Pos;
+        let closingBracket: IToken = this.NextToken();
+        while (closingBracket.str != ')') {
+            closingBracket = this.NextToken();
+        }
+        let rawArgs = this.textDocument.getText().substring(start, closingBracket.range.start);
+        return this.parseArgsString(rawArgs);
     }
-    protected     CreateMacro(isPrivate: boolean)   :void           {
+    protected parseArgsString(src: string): Array<CVar> {
+        src = src.trim();
+        if (src == "") return [];
+        return src.trim().split(',').map(function (arg) {
+            let [name, type] = arg.trim().split(':');
+            name = name.trim();
+            if (type) {
+                type = type.trim();
+            } else {
+                type = "";
+            }
+            return new CVar(this.textDocument, name, true, false, false, type);
+        },
+        this);
+    }
+    protected parseMacro(isPrivate: boolean): void {
+        let start = this.textDocument.positionAt(this.Pos);
         let isMethod = (this.ObjKind == CompletionItemKind.Class);
         let name: IToken = this.NextToken();
-        let args: Array<string>;
+        let args: Array<CVar> = [];
         let token = this.NextToken();
         if (token.str == '(') {
-            let closingBracket: IToken = this.NextToken();
-            while (closingBracket.str != ')') {
-                closingBracket = this.NextToken();
-            }
-            let rawArgs = this.textDocument.getText().substring(token.range.end, closingBracket.range.start);
-            args = this.parseArgs(rawArgs);
+            args = this.parseArgs();
         }
         let returnType = 'variant';
         if (this.NextToken().str == ':') {
             returnType = this.NextToken().str;
         }
+        let bodyRange = this.getObjectBodyRange();
         let range: Range = {
-            start: this.textDocument.positionAt(name.range.start),
-            end: this.getObjectBodyRange().end
+            start: start,
+            end: bodyRange.end
         };
         let macro: CMacro = new CMacro(this.textDocument, range, name.str, args, returnType, isPrivate, isMethod);
         this.addChild(macro);
+        macro.parseBody()
     }
-    protected     CreateClass(isPrivate: boolean)   : void {
+    protected parseClass(isPrivate: boolean): void {
         let parentName: string = "";
         let name: IToken = this.NextToken();
         if (name.str == "(") {
@@ -564,11 +621,16 @@ export class CBase extends CAbstractBase {
             this.Next();
             name = this.NextToken();
         }
+        let token = this.NextToken();
+        let args: Array<CVar> = [];
+        if (token.str == "(") { // class constructor has args
+            args = this.parseArgs();
+        }
         let range: Range = {
-            start: this.textDocument.positionAt(name.range.start),
+            start: this.textDocument.positionAt(this.Pos),
             end: this.getObjectBodyRange().end
         };
-        let classObj: CClass = new CClass(this.textDocument, range, name.str, parentName, isPrivate);
+        let classObj: CClass = new CClass(this.textDocument, range, name.str, parentName, args, isPrivate);
         this.addChild(classObj);
     }
     protected     CreateImport(): void {
@@ -599,41 +661,14 @@ export class CBase extends CAbstractBase {
             validateTextDocument(textDocument);
         });
     }
-    protected parse(): void {
-        this.childs = new Array();
+    protected parseBody(): void {
+        if (this.range.start === 0 && this.range.end === 0) {
+            this.range = {start: 0, end: this.textDocument.getText().length};
+        }
+        this.offset = this.range.start;
+        this.children = new Array();
         this.Skip();
         let curToken: string;
-        const closeBracket: string = ")";
-        if (this.CurrentChar == "(") {
-            let paramString: string = this.CurrentChar;
-            this.Next();
-            let savePos: number = this.Pos;
-            curToken = this.NextToken().str;
-            if (curToken != ")") {
-                this.offset = savePos;
-                while (this.CurrentChar != closeBracket && !this.End) {
-                    paramString += this.CurrentChar;
-                    this.Next();
-                }
-                paramString += ")";
-                this.offset = savePos;
-                this.CreateVariable(true);
-            }
-            else paramString = paramString + curToken; //")"
-            let stop = false;
-            do {
-                curToken = this.NextToken(SkipComment.no).str;
-                if (curToken == ":") this.setType(this.GetDataType(this.NextToken().str).second);
-                else if (curToken == OLC || curToken == MLC_O) {
-                    let comment: string = (curToken == OLC) ? this.GetOLC() : this.GetMLC();
-                    this.Description(comment);
-                    stop = true;
-                }
-                else { this.offset = savePos; stop = true; }
-
-            } while (!stop)
-            this.paramStr = paramString;
-        }
 
         while (!this.End) {
             curToken = this.NextToken().str;
@@ -647,21 +682,21 @@ export class CBase extends CAbstractBase {
                             let tmp = this.getKeywordNum(curToken);
                             if (tmp.first) {
                                 switch (tmp.second) {
-                                    case kwdNum._const: this.CreateVariable(true, true); break;
-                                    case kwdNum._var  : this.CreateVariable(true); break;
+                                    case kwdNum._const: this.parseVariable(true, true); break;
+                                    case kwdNum._var  : this.parseVariable(true); break;
                                     case kwdNum._record: this.CreateRecord(true); break;
-                                    case kwdNum._macro: this.CreateMacro(true); break;
-                                    case kwdNum._class: this.CreateClass(true); break;
+                                    case kwdNum._macro: this.parseMacro(true); break;
+                                    case kwdNum._class: this.parseClass(true); break;
                                     default: break;
                                 }
                             }
                         } break;
-                    case kwdNum._const : this.CreateVariable(false, true); break;
-                    case kwdNum._var   : this.CreateVariable(false); break;
+                    case kwdNum._const : this.parseVariable(false, true); break;
+                    case kwdNum._var   : this.parseVariable(false); break;
                     case kwdNum._record: this.CreateRecord(false); break;
-                    case kwdNum._macro : this.CreateMacro(false); break;
+                    case kwdNum._macro : this.parseMacro(false); break;
                     case kwdNum._import: this.CreateImport(); break;
-                    case kwdNum._class : this.CreateClass(false); break;
+                    case kwdNum._class : this.parseClass(false); break;
                     default: break;
                 }
             }
@@ -670,11 +705,11 @@ export class CBase extends CAbstractBase {
 }
 
 /** Базовый класс для макросов*/
-class CMacro extends CBase {
+class CMacro extends RslEntityWithBody {
     protected returnType: string;
-    protected args: Array<string>;
+    protected args: Array<CVar>;
 
-    constructor(textDocument: TextDocument, range: Range, name: string, args: Array<string>, returnType: string, isPrivate: boolean, isMethod: boolean) {
+    constructor(textDocument: TextDocument, range: Range, name: string, args: Array<CVar>, returnType: string, isPrivate: boolean, isMethod: boolean) {
         super(textDocument, range, isMethod ? CompletionItemKind.Method : CompletionItemKind.Function);
         this.name = name;
         this.setType(returnType);
@@ -682,21 +717,22 @@ class CMacro extends CBase {
         this.isPrivate = isPrivate;
         this.range = convertToIRange(textDocument, range);
         this.insertedText = `${name}()`;
+        this.addChildren(args);
     }
     updateCompletionInfo(): void {
         this.detail = getStrItemKind(this.objKind);
         this.description.value =
             "\n```rsl\n"
-            + `macro ${this.name}(` + this.args.join(', ') + `): ${this.Type}`
+            + `macro ${this.name}(` + this.args.map(arg => {return arg.Name + (arg.Type ? (': ' + arg.Type) : '')}).join(', ') + `): ${this.Type}`
             + "\n```\n"
         ;
     }
 }
 /** Базовый класс для классов*/
-class CClass extends CBase {
+class CClass extends RslEntityWithBody {
     private parentName:string;
 
-    constructor(textDocument: TextDocument, range: Range, name:string, parentName:string, privateFlag:boolean){
+    constructor(textDocument: TextDocument, range: Range, name:string, parentName:string, args:Array<RslEntity>, privateFlag:boolean){
         super(textDocument, range, CompletionItemKind.Class);
         this.name = name;
         this.parentName = parentName;
@@ -707,6 +743,7 @@ class CClass extends CBase {
         if (parentName.length > 0) {
             //TODO: подгрузить методы и свойства родительского класса
         }
+        this.addChildren(args);
     }
     getParentName():string {return this.parentName;}
 

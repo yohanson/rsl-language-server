@@ -24,10 +24,10 @@ import {
 	TextDocument
 } from 'vscode-languageserver-textdocument';
 
-import { IImport, IRslSettings, IToken} from  './interfaces';
+import { RslEntity, IImport, IRslSettings, IToken} from  './interfaces';
 import { getDefaults, getCompletionInfoForArray } from './defaults';
 
-import { CBase } from './common';
+import { RslEntityWithBody } from './common';
 import { getSymbols } from './docsymbols';
 
 const connection: ProposedFeatures.Connection = createConnection(ProposedFeatures.all);
@@ -50,17 +50,16 @@ function getCurDoc(uri:string):TextDocument {
     return curDocArr.pop().object.getTextDocument();
 }
 
-function getCurObj(uri: string): CBase {
+function getCurObj(uri: string): RslEntityWithBody {
   return Imports.find(m => m.uri === uri)?.object;
 }
 
-function FindObject(tdpp: TextDocumentPositionParams): IImport {
+function FindObject(tdpp: TextDocumentPositionParams): RslEntity {
     let uri = tdpp.textDocument.uri;
-    let CBaseObject  : CBase    = undefined;
-    let findObject   : IImport = undefined;
-    let token        : IToken   = undefined;
-    let document     : TextDocument = getCurDoc(tdpp.textDocument.uri);
-    let tree         : CBase  = getCurObj(tdpp.textDocument.uri);
+    let foundObject: RslEntity = undefined;
+    let token: IToken = undefined;
+    let document: TextDocument = getCurDoc(tdpp.textDocument.uri);
+    let tree: RslEntityWithBody = getCurObj(tdpp.textDocument.uri);
     if (tree === undefined) {
         return undefined;
     }
@@ -70,10 +69,10 @@ function FindObject(tdpp: TextDocumentPositionParams): IImport {
         return undefined;
     }
     let objArr = tree.getActualChilds(curOffset);
-    let objects: Array<CBase> = new Array();
+    let objects: Array<RslEntity> = new Array();
     for (const element of objArr) {
-        if (element.isObject()) {
-            element.getChilds().forEach(child=>{
+        if (element.canHaveChildren()) {
+            element.getChildren().forEach(child=>{
                 if (child.Name === token.str) objects.push(child);
             });
         }
@@ -88,34 +87,33 @@ function FindObject(tdpp: TextDocumentPositionParams): IImport {
             let curDistanse:number = token.range.start - iterator.Range.end;
             if (curDistanse < minDistanse)
             {
-                CBaseObject = iterator;
+                foundObject = iterator;
                 minDistanse = curDistanse;
             }
         }
     }
     else if (objects.length == 1)
     {
-        CBaseObject = objects.pop();
+        foundObject = objects.pop();
     }
 
-    if (CBaseObject == undefined)
+    if (foundObject == undefined)
     {
         for (const iterator of Imports) {
             if (iterator.uri != tdpp.textDocument.uri) {
                 let objArr = iterator.object.getActualChilds(0);
                 for (const element of objArr) {
                     if (element.Name === token.str) {
-                        CBaseObject = element;
+                        foundObject = element;
                         uri = iterator.uri;
                         break;
                     }
                 }
             }
-            if (CBaseObject != undefined) break;
+            if (foundObject != undefined) break;
         }
     }
-    findObject = (CBaseObject != undefined)?{object: CBaseObject, uri: uri}: undefined;
-    return findObject;
+    return foundObject;
 }
 
 connection.onInitialize((params: InitializeParams) => {
@@ -213,9 +211,9 @@ export async function validateTextDocument(textDocument: TextDocument): Promise<
     const module = Imports.find(m => m.uri === textDocument.uri);
     let range: Range = { start: textDocument.positionAt(0), end: {line: textDocument.lineCount + 1, character: 0 }};
     if (module) {
-        module.object = new CBase(textDocument, range, CompletionItemKind.Unit, diagnostics);
+        module.object = new RslEntityWithBody(textDocument, range, CompletionItemKind.Unit, diagnostics);
     } else {
-        Imports.push({ uri: textDocument.uri, object: new CBase(textDocument, range, CompletionItemKind.Unit, diagnostics) });
+        Imports.push({ uri: textDocument.uri, object: new RslEntityWithBody(textDocument, range, CompletionItemKind.Unit, diagnostics) });
     }
 
 
@@ -256,50 +254,46 @@ connection.onDidChangeWatchedFiles(_change => {
     connection.console.log('We received an file change event');
 });
 
-function isNotCommentOrString(tdpp: TextDocumentPositionParams):boolean
+function isCommentOrString(tdpp: TextDocumentPositionParams):boolean
 {
-    let document      : TextDocument = getCurDoc(tdpp.textDocument.uri);
-    let text          : string       = document.getText();
-    let isNotInPattern: boolean      = true;
+    let document: TextDocument = getCurDoc(tdpp.textDocument.uri);
+    let text: string = document.getText();
     let patterns = [];
     patterns.push(/(\/\/)(.+?)(?=[\n\r])/g);//однострочный комментарий
-    patterns.push(/\*[^*]*\*+(?:[^/*][^*]*\*+)*/g); //многострочный комментарий
+    patterns.push(/\/\*[^*]*(?:[^/*][^*]*)*\*\//g); //многострочный комментарий
+    // patterns.push(/\/\*[\s\S]*\*\//g); //многострочный комментарий
     patterns.push(/\"(\\.|[^\"])*\"/g); //строка
     // patterns.push(/\'(\\.|[^\'])*\'/g); //строка //хз, с этим зависает
 
     let m: RegExpExecArray | null;
 
-    for (const pattern of patterns)
-    {
-        if (!isNotInPattern) break;
-
-        while ((m = pattern.exec(text)) && isNotInPattern) {
+    for (const pattern of patterns) {
+        while ((m = pattern.exec(text))) {
             let offset = document.offsetAt(tdpp.position);
-            if (offset >= m.index && offset <=m.index+m[0].length)
-            {
-                isNotInPattern = false;
+            if (offset >= m.index && offset <= m.index + m[0].length) {
+                return true;
             }
         }
     }
-    return isNotInPattern;
+    return false;
 }
 
 connection.onCompletion((tdpp: TextDocumentPositionParams): CompletionItem[] => {
     let CompletionItemArray : Array<CompletionItem>  = new Array();
     let document            : TextDocument           = getCurDoc(tdpp.textDocument.uri);
-    let obj                 : IImport               = FindObject(tdpp);
+    let obj                 : RslEntity               = FindObject(tdpp);
     let curPos = document.offsetAt(tdpp.position);
 
-    if (isNotCommentOrString(tdpp))
+    if (!isCommentOrString(tdpp))
     {
         if (obj != undefined) {     //нашли эту переменную
-            if (obj.object.Type !== "variant") {
-                let objClass: CBase;
+            if (obj.Type !== "variant") {
+                let objClass: RslEntity;
                 for (const iterator of Imports) {
                     let objArr = iterator.object.getActualChilds(iterator.uri == tdpp.textDocument.uri? curPos: 0);
                     for (const objIter of objArr)
                     {
-                        if (objIter.Name == obj.object.Type)
+                        if (objIter.Name == obj.Type)
                         {
                             objClass = objIter;
                             break;
@@ -312,7 +306,7 @@ connection.onCompletion((tdpp: TextDocumentPositionParams): CompletionItem[] => 
                 } else {
                     // Searching in predefined defaults
                     for (const defType of getDefaults().getChilds()) {
-                        if (obj.object.Type == defType.returnType()) {
+                        if (obj.Type == defType.returnType()) {
                             return defType.ChildsCompletionInfo();
                         }
                     };
@@ -336,14 +330,14 @@ connection.onCompletion((tdpp: TextDocumentPositionParams): CompletionItem[] => 
 connection.onCompletionResolve((item: CompletionItem): CompletionItem => {return item;});
 
 connection.onHover((tdpp: TextDocumentPositionParams): Hover => {
-    let hover    : Hover        =  undefined;
-    if (isNotCommentOrString(tdpp))
+    let hover: Hover =  undefined;
+    if (!isCommentOrString(tdpp))
     {
-        let document : TextDocument = getCurDoc(tdpp.textDocument.uri);
-        let obj      : IImport     = FindObject(tdpp);
-        let token    : IToken       = getCurObj(tdpp.textDocument.uri).getCurrentToken(document.offsetAt(tdpp.position));
+        let document: TextDocument = getCurDoc(tdpp.textDocument.uri);
+        let obj: RslEntity = FindObject(tdpp);
+        let token: IToken = getCurObj(tdpp.textDocument.uri).getCurrentToken(document.offsetAt(tdpp.position));
         if (obj != undefined) {
-            let completionInfo = obj.object.CompletionInfo;
+            let completionInfo = obj.CompletionInfo;
             let contents: MarkupContent = {kind: MarkupKind.Markdown, value: completionInfo.detail};
             if (typeof completionInfo.documentation === 'object') {
                 contents.value += completionInfo.documentation.value;
@@ -355,7 +349,11 @@ connection.onHover((tdpp: TextDocumentPositionParams): Hover => {
                 range : { start: document.positionAt(token.range.start),
                           end  : document.positionAt(token.range.end) }
             }
+        } else {
+            return {contents: "Token '" + token.str + "' not found", range: {start: tdpp.position, end: tdpp.position}};
         }
+    } else {
+        return {contents: "This is comment", range: {start: tdpp.position, end: tdpp.position}};
     }
 
     return hover != undefined? hover: null;
@@ -363,17 +361,17 @@ connection.onHover((tdpp: TextDocumentPositionParams): Hover => {
 
 
 connection.onDefinition((tdpp: TextDocumentPositionParams) => {
-    let obj     : IImport     = FindObject(tdpp);
-    let result  : Definition   = undefined;
-    if (isNotCommentOrString(tdpp))
+    let obj: RslEntity = FindObject(tdpp);
+    let result: Definition = undefined;
+    if (!isCommentOrString(tdpp))
     {
         if (obj != undefined) {
-            let document: TextDocument = getCurDoc(obj.uri);
+            let document: TextDocument = getCurDoc(obj.getTextDocument().uri);
             if (document === undefined) return null;
-            let range = obj.object.Range;
+            let range = obj.Range;
             let startPos: Position = document.positionAt(range.start);
-            let endPos  : Position = document.positionAt(range.start + obj.object.Name.length);
-            result = Location.create(obj.uri, {
+            let endPos  : Position = document.positionAt(range.start + obj.Name.length);
+            result = Location.create(obj.getTextDocument().uri, {
                 start: startPos,
                 end  : endPos
             })
@@ -385,7 +383,7 @@ connection.onDefinition((tdpp: TextDocumentPositionParams) => {
 function refreshModule(textDocument: TextDocument) {
   const { uri } = textDocument;
   let range: Range = { start: textDocument.positionAt(0), end: {line: textDocument.lineCount + 1, character: 0 }};
-  const object = new CBase(textDocument, range);
+  const object = new RslEntityWithBody(textDocument, range);
 
   const module = Imports.find(m => m.uri === uri);
   if (module) {
