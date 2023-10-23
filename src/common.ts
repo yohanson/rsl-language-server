@@ -652,6 +652,25 @@ export class RslEntityWithBody extends RslEntity {
             validateTextDocument(textDocument);
         });
     }
+    protected parseFor(): void {
+        // TODO: create an object for the code block (like for and while)
+        let token = this.NextToken();
+        if (token.str !== '(') { return; }
+        token = this.NextToken();
+        if (token.str.toLowerCase() === 'var') {
+            let name = this.NextToken();
+            token = this.NextToken();
+            let type = 'variant';
+            if (token.str === ':') {
+                token = this.NextToken();
+                type = token.str;
+            }
+            this.addChild(new CVar(this.textDocument, name.str, convertToRange(this.textDocument, name.range), false, false, false, type));
+        }
+        while (token.str !== ')') {
+            token = this.NextToken();
+        }
+    }
     protected parseBody(): void {
         if (this.range.start === 0 && this.range.end === 0) {
             this.range = {start: 0, end: this.textDocument.getText().length};
@@ -687,6 +706,7 @@ export class RslEntityWithBody extends RslEntity {
                     case kwdNum._macro : this.parseMacro(false); break;
                     case kwdNum._import: this.CreateImport(); break;
                     case kwdNum._class : this.parseClass(false); break;
+                    case kwdNum._for: this.parseFor(); break;
                     default: break;
                 }
             }
