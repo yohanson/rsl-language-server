@@ -158,10 +158,11 @@ let STR_ITEM_KIND:Cstr_item_kind = new Cstr_item_kind();
 export class CVar extends RslEntity {
     private value: string;
 
-    constructor(textDocument: TextDocument, name: string, privateFlag: boolean, isConstant: boolean, isProperty: boolean, type: string) {
+    constructor(textDocument: TextDocument, name: string, range: Range, privateFlag: boolean, isConstant: boolean, isProperty: boolean, type: string) {
         super(textDocument);
         this.value = "";
         this.name = name;
+        this.range = convertToIRange(textDocument, range);
         this.setType(type);
         this.isPrivate = privateFlag;
         this.objKind = isProperty ? CompletionItemKind.Property : (isConstant ? CompletionItemKind.Constant : CompletionItemKind.Variable);
@@ -230,9 +231,7 @@ export class RslEntityWithBody extends RslEntity {
         this.children.push(node);
     }
     addChildren(children: Array<RslEntity>) {
-        children.forEach(child => {
-            this.addChild(child);
-        });
+        this.children = this.children.concat(children);
     }
     setType(type: string) { this.varType_ = type }
 
@@ -260,9 +259,7 @@ export class RslEntityWithBody extends RslEntity {
                 {
                     if (parent instanceof RslEntityWithBody)
                     {
-                        console.warn("Parent (" + parent.name + ") has " + parent.children.length + " children:");
                         parent.children.forEach(child => {
-                            console.warn("Child: " + child.Name);
                             answer.push(child);
                         })
                     }
@@ -438,14 +435,12 @@ export class RslEntityWithBody extends RslEntity {
     }
     protected CreateRecord(isPrivate: boolean = false, isConstant: boolean = false) {
         let name = this.NextToken();
-        let record = new CVar(this.textDocument, name.str, isPrivate, isConstant, false, "record");
-        record.setRange(name.range);
+        let record = new CVar(this.textDocument, name.str, convertToRange(this.textDocument, name.range), isPrivate, isConstant, false, "record");
         this.addChild(record);
     }
     protected parseVariable(isPrivate: boolean, isConstant: boolean = false) {
         let token: IToken = this.NextToken();
-        let varObject: CVar = new CVar(this.textDocument, token.str, isPrivate, isConstant, this.ObjKind === CompletionItemKind.Class, '');
-        varObject.setRange({start: token.range.start, end: token.range.end});
+        let varObject: CVar = new CVar(this.textDocument, token.str, convertToRange(this.textDocument, token.range), isPrivate, isConstant, this.ObjKind === CompletionItemKind.Class, '');
         token = this.NextToken();
         let stop: boolean = false;
         let comment: string = "";
@@ -568,31 +563,28 @@ export class RslEntityWithBody extends RslEntity {
             console.warn(this.textDocument.uri.valueOf() + ":" + (this.textDocument.positionAt(this.Pos).line + 1) + " parseArgs called not on '('!");
             return [];
         }
-        let start = this.Pos;
-        let closingBracket: IToken = this.NextToken();
-        while (closingBracket.str != ')') {
-            closingBracket = this.NextToken();
-        }
-        let rawArgs = this.textDocument.getText().substring(start, closingBracket.range.start);
-        return this.parseArgsString(rawArgs);
-    }
-    protected parseArgsString(src: string): Array<CVar> {
-        src = src.trim();
-        if (src == "") return [];
-        return src.trim().split(',').map(function (arg) {
-            let [name, type] = arg.trim().split(':');
-            name = name.trim();
-            if (type) {
-                type = type.trim();
-            } else {
-                type = "";
+        let args: Array<CVar> = [];
+        let token: IToken = this.NextToken();
+        while (token.str !== ')') {
+            let range = convertToRange(this.textDocument, token.range);
+            let name = token.str;
+            let type = 'variant';
+            token = this.NextToken();
+            if (token.str === ':') {
+                token = this.NextToken();
+                if (token.str !== ')') { // in case we're typing
+                    type = token.str;
+                    token = this.NextToken();
+                }
             }
-            return new CVar(this.textDocument, name, true, false, false, type);
-        },
-        this);
+            args.push(new CVar(this.textDocument, name, range, true, false, false, type));
+            if (token.str === ',') {
+                token = this.NextToken();
+            }
+        }
+        return args;
     }
     protected parseMacro(isPrivate: boolean): void {
-        let start = this.textDocument.positionAt(this.Pos);
         let isMethod = (this.ObjKind == CompletionItemKind.Class);
         let name: IToken = this.NextToken();
         let args: Array<CVar> = [];
@@ -606,12 +598,11 @@ export class RslEntityWithBody extends RslEntity {
         }
         let bodyRange = this.getObjectBodyRange();
         let range: Range = {
-            start: start,
+            start: this.textDocument.positionAt(name.range.start),
             end: bodyRange.end
         };
         let macro: CMacro = new CMacro(this.textDocument, range, name.str, args, returnType, isPrivate, isMethod);
         this.addChild(macro);
-        macro.parseBody()
     }
     protected parseClass(isPrivate: boolean): void {
         let parentName: string = "";
@@ -627,7 +618,7 @@ export class RslEntityWithBody extends RslEntity {
             args = this.parseArgs();
         }
         let range: Range = {
-            start: this.textDocument.positionAt(this.Pos),
+            start: this.textDocument.positionAt(name.range.start),
             end: this.getObjectBodyRange().end
         };
         let classObj: CClass = new CClass(this.textDocument, range, name.str, parentName, args, isPrivate);
@@ -666,7 +657,6 @@ export class RslEntityWithBody extends RslEntity {
             this.range = {start: 0, end: this.textDocument.getText().length};
         }
         this.offset = this.range.start;
-        this.children = new Array();
         this.Skip();
         let curToken: string;
 
