@@ -12,24 +12,24 @@ import {
     Range,
     MarkupContent,
     MarkupKind,
+    DiagnosticTag,
 } from 'vscode-languageserver/node';
 
 import {
     TextDocument
 } from 'vscode-languageserver-textdocument';
 
-import { URI } from 'vscode-uri';
+import { URIUppercaseDriveLetter as URI } from './utils/uri-uppercase-drive-letter';
 
 import { DEFAULT_WHITESPACES, LINEBREAKS, STOP_CHARS, varType, kwdNum, SkipComment, intersNum, OLC, MLC_O, MLC_C, DIGITS } from './enums';
 import { ArrayClass, getDefaults, getCompletionInfoForArray } from './defaults'
-import { getTree, validateTextDocument } from './server';
+import { getTree, getUnit, validateTextDocument, validateTextDocumentSync } from './server';
 import { IImport, If_s, IArray, IRange, RslEntity, IToken } from './interfaces';
 import { readFileSync, existsSync } from 'fs';
-import { convertToRange, convertToIRange } from './utils';
+import { convertToRange, convertToIRange, rangeToString, positionToString } from './utils';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
 import { searchMacrofile } from './macrosearch';
-import { exit } from 'process';
 
 class CArray implements IArray{
     _it:Array<string>;
@@ -155,6 +155,26 @@ let TYPES:Ctypes = new Ctypes();
 let KEYWORDS:Ckeywords = new Ckeywords();
 let STR_ITEM_KIND:Cstr_item_kind = new Cstr_item_kind();
 
+
+export class CImportStatement extends RslEntity {
+    private path: string;
+
+    constructor(textDocument: TextDocument, name: string, range: Range, path: string) {
+        super(textDocument);
+        this.name = name;
+        this.range = range;
+        this.path = path;
+    }
+    isActual(pos: number): boolean { return (this.textDocument.offsetAt(this.range.end) <= pos) }
+    reParse(): void {}
+    updateCompletionInfo(): void {
+        this.detail = `${getStrItemKind(this.objKind)}: `
+        this.detail += this.name;
+        if (this.path) {
+            this.detail += `\n${this.path}`;
+        }
+    }
+}
 export class CVar extends RslEntity {
     private value: string;
 
@@ -162,7 +182,7 @@ export class CVar extends RslEntity {
         super(textDocument);
         this.value = "";
         this.name = name;
-        this.range = convertToIRange(textDocument, range);
+        this.range = range;
         this.setType(type);
         this.isPrivate = privateFlag;
         this.objKind = isProperty ? CompletionItemKind.Property : (isConstant ? CompletionItemKind.Constant : CompletionItemKind.Variable);
@@ -180,8 +200,9 @@ export class CVar extends RslEntity {
             this.detail += `: ${this.varType_}`;
         }
         if (this.value.length > 0) this.detail += ` = ${this.value}`;
+        this.detail += '\n'
     }
-    isActual(pos: number)   : boolean { return (this.range.end < pos) }
+    isActual(pos: number)   : boolean { return (this.textDocument.offsetAt(this.range.end) <= pos) }
     reParse()             : void {}
 }
 /** Родительский класс для файлов, макросов и классов*/
@@ -190,26 +211,27 @@ export class RslEntityWithBody extends RslEntity {
     protected paramStr: string;
     /** Номер символа от начала файла */
     protected offset: number;
-    protected savedPos: number;
+    protected direction: number = 1;
+    protected savedPos: number[];
     protected diagnostics: Array<Diagnostic>;
 
-    constructor(textDocument: TextDocument, range: Range, objKind:CompletionItemKind = CompletionItemKind.Unit, diagnostics: Array<Diagnostic> = []) {
+    constructor(textDocument: TextDocument, range: Range, objKind:CompletionItemKind = CompletionItemKind.Unit) {
         super(textDocument);
-        this.range = convertToIRange(textDocument, range);
+        this.range = range;
         this.children = new Array();
         this.textDocument = textDocument;
         this.paramStr = "";
-        this.savedPos = 0;
+        this.savedPos = [0];
         this.offset = this.textDocument.offsetAt(range.start);
         this.objKind = objKind;
-        this.diagnostics = diagnostics;
+        this.diagnostics = [];
         this.parseBody();
     }
 
     updateCompletionInfo(): void {}
 
     isActual(pos: number): boolean {
-        return (this.range.start < pos && pos < this.range.end);
+        return (this.textDocument.offsetAt(this.range.start) < pos && pos < this.textDocument.offsetAt(this.range.end));
     }
 
     RecursiveFind(name: string): RslEntity {
@@ -226,6 +248,7 @@ export class RslEntityWithBody extends RslEntity {
         this.offset = 0;
         this.parseBody();
     }
+    getDiagnostics() { return this.diagnostics; }
     getChildren() { return this.children; }
     addChild(node: RslEntity) {
         this.children.push(node);
@@ -235,7 +258,7 @@ export class RslEntityWithBody extends RslEntity {
     }
     setType(type: string) { this.varType_ = type }
 
-    ProcessImportNames(): Range[] {
+    parseImportNames(): Range[] {
         let names: Range[] = [];
         let token: IToken;
         let delimiter: IToken;
@@ -252,7 +275,7 @@ export class RslEntityWithBody extends RslEntity {
         if (position != 0) //Ищем в текущем файле
         {
             this.children.forEach(parent => {
-                if (parent.Range.start < position) {
+                if (this.textDocument.offsetAt(parent.Range.start) <= position) {
                     answer.push(parent);
                 }
                 if (parent.isActual(position)) //пробуем взять только актуальные
@@ -301,7 +324,7 @@ export class RslEntityWithBody extends RslEntity {
         let answer: Array<CompletionItem> = new Array();
         this.children.forEach(child => {
             if (isCheckActual) {
-                if (child.Range.end < position) {
+                if (this.textDocument.offsetAt(child.Range.end) < position) {
                     if (isCheckPrivate) {
                         if (!child.Private) answer.push(child.CompletionInfo);
                     }
@@ -345,7 +368,7 @@ export class RslEntityWithBody extends RslEntity {
     protected     getKeywordNum(token: string): If_s<number> { return KEYWORDS.is(token.toLowerCase()); }
 
     protected charAt(index: number): string {
-        if (index + 1 >= this.range.end) {
+        if (index + 1 >= this.textDocument.offsetAt(this.range.end) || index < 0) {
             return "";
         }
         let range = {start: this.textDocument.positionAt(index), end: this.textDocument.positionAt(index+1)};
@@ -356,11 +379,13 @@ export class RslEntityWithBody extends RslEntity {
     protected get CurrentChar()               : string    { return this.charAt(this.offset); }
     protected get Pos()                       : number    { return this.offset; }
     protected get End()                       : boolean   { return this.CurrentChar == ""; }
-    protected     Next()                      : void      { if (!this.End) this.offset++; }
+    protected     Next()                      : void      { if (!this.End) this.offset += this.direction; }
     protected     Skip()                      : void      { while (DEFAULT_WHITESPACES.includes(this.CurrentChar) && !this.End) this.Next(); }
+    protected     SkipTo(char: string): void { while (this.CurrentChar != char && !this.End) this.Next(); }
     protected     IsStopChar()                : boolean   { return STOP_CHARS.includes(this.CurrentChar); }
-    protected     RestorePos()                : void      {this.offset = this.savedPos}
-    protected     SavePos()                   : void      {this.savedPos = this.offset}
+    protected     RestorePos(): void { this.offset = this.savedPos.pop() }
+    protected     DiscardSavedPos(): void { this.savedPos.pop() }
+    protected     SavePos(): void { this.savedPos.push(this.offset) }
     protected     getObjectBodyRange(): Range {
         let token: string;
         let savePos: number = this.Pos;
@@ -416,9 +441,16 @@ export class RslEntityWithBody extends RslEntity {
             token = this.CurrentChar;
             this.Next();
         }
-        let range :IRange = {start: savedPosition, end: savedPosition + token.length};
+        let range: IRange = {start: savedPosition, end: savedPosition + token.length * this.direction};
         let answer:IToken = {str: token, range};
         return answer;
+    }
+    protected PrevToken(skipComment: SkipComment = SkipComment.yes): IToken {
+        this.direction = -1;
+        let token = this.NextToken(skipComment);
+        this.direction = 1;
+        token.range = {start: token.range.end + 1, end: token.range.start + 1};
+        return token;
     }
     protected     IsToken(chr: string)        : boolean   {
         let answer: If_s<number> = {first: false, second: 0};
@@ -433,22 +465,33 @@ export class RslEntityWithBody extends RslEntity {
         }
         return answer.first;
     }
-    protected CreateRecord(isPrivate: boolean = false, isConstant: boolean = false) {
+    protected parseRecord(isPrivate: boolean = false, isConstant: boolean = false) {
+        this.SavePos();
+        let type = this.PrevToken();
+        this.RestorePos();
         let name = this.NextToken();
+        while (this.NextToken().str != ';') { }
         let record = new CVar(this.textDocument, name.str, convertToRange(this.textDocument, name.range), isPrivate, isConstant, false, "record");
+        this.diagnostics.push({
+            severity: DiagnosticSeverity.Hint,
+            range: convertToRange(this.textDocument, type.range),
+            message: `Определение Record устарело, от такого надо избавляться по возможности.`,
+            source: 'RSL parser',
+            tags: [ DiagnosticTag.Deprecated ],
+        });
         this.addChild(record);
     }
-    protected parseVariable(isPrivate: boolean, isConstant: boolean = false) {
+    protected parseSingleVariable(isPrivate: boolean, isConstant: boolean) {
         let token: IToken = this.NextToken();
         let varObject: CVar = new CVar(this.textDocument, token.str, convertToRange(this.textDocument, token.range), isPrivate, isConstant, this.ObjKind === CompletionItemKind.Class, '');
         token = this.NextToken();
         let stop: boolean = false;
         let comment: string = "";
         let varTypeStr: string = "";
+        let hasMore = false;
         while (!stop && !this.End) {
             switch (token.str) {
-                case "(":
-                case ")": { stop = true; } break;
+                case "(": this.SkipTo(")"); this.Next(); break;
                 case OLC:
                 case MLC_O: {
                     comment = (token.str == OLC) ? this.GetOLC() : this.GetMLC();
@@ -465,23 +508,28 @@ export class RslEntityWithBody extends RslEntity {
                         }
                     }
                 } break;
-                case ",":
+                case ",": hasMore = true;
                 case ";": {
-                    let sToken = token.str;
                     this.SavePos();
                     token = this.NextToken(SkipComment.no);
-                    if (token.str != OLC && token.str != MLC_O) this.RestorePos();
-                    else {
+                    if (this.textDocument.positionAt(token.range.start).line == this.textDocument.positionAt(this.savedPos.at(-1)).line && (token.str == OLC || token.str == MLC_O)) {
+                        this.DiscardSavedPos();
                         comment = (token.str == OLC) ? this.GetOLC() : this.GetMLC();
                         varObject.Description(comment);
+                    } else {
+                        this.RestorePos();
                     }
-                    if (sToken == ",") this.parseVariable(isPrivate, isConstant);
-                    if (sToken == ";") stop = true;
+                    stop = true;
                 } break;
             }
             if (!stop) token = this.NextToken();
         }
         this.addChild(varObject);
+        return hasMore;
+    }
+    protected parseVariable(isPrivate: boolean, isConstant: boolean = false) {
+        while (this.parseSingleVariable(isPrivate, isConstant)) {
+        }
     }
     protected     GetOLC()                    : string 	{
         let comment: string = "";
@@ -497,15 +545,14 @@ export class RslEntityWithBody extends RslEntity {
             comment += this.CurrentChar;
             this.Next();
         }
-        this.Next(); this.Next();
-        return comment;
+        this.Next(); this.Next(); //пропустить закрывающий символ "/*"
+        return comment.trim();
     }
     protected     SkipToEndComment(isOLC:boolean = false): void {
         if (isOLC) {
             this.GetOLC();
         } else {
             this.GetMLC();
-            this.Next(); this.Next(); //пропустить закрывающий символ "/*"
         }
         this.Skip();
     }
@@ -624,11 +671,10 @@ export class RslEntityWithBody extends RslEntity {
         let classObj: CClass = new CClass(this.textDocument, range, name.str, parentName, args, isPrivate);
         this.addChild(classObj);
     }
-    protected     CreateImport(): void {
-        let nameRanges: Range[] = this.ProcessImportNames();
+    protected parseImport(): void {
+        let nameRanges: Range[] = this.parseImportNames();
         nameRanges.forEach(nameRange => {
             let nameInter = this.textDocument.getText(nameRange);
-            //запросим открытие такого файла
             let currentFileDir = path.dirname(fileURLToPath(this.textDocument.uri));
             if (nameInter.startsWith('"') && nameInter.endsWith('"')) {
                 nameInter = nameInter.substring(1, nameInter.length - 1);
@@ -645,11 +691,36 @@ export class RslEntityWithBody extends RslEntity {
                 this.diagnostics.push(importError);
                 return;
             };
-            if (fullpath.endsWith('.d32')) return;
+            let relativePath = path.relative(currentFileDir, fullpath);
+            if (fullpath.endsWith('.d32')) {
+                this.addChild(new CImportStatement(this.textDocument, nameInter, nameRange, relativePath));
+                return;
+            }
+            let uri = URI.file(path.resolve(fullpath)).toString(true);
+            let unit = getUnit(uri);
+            if (unit) {
+                // TODO: distinguish already imported and cycle
+                let cycleImportError: Diagnostic = {
+                    severity: DiagnosticSeverity.Error,
+                    range: nameRange,
+                    message: `Cycle import in "${relativePath}"`,
+                    source: 'RSL parser'
+                };
+                this.diagnostics.push(cycleImportError);
+                this.addChild(new CImportStatement(unit.object?unit.object.textDocument:undefined, nameInter, nameRange, relativePath));
+                return;
+            }
+            //запросим открытие такого файла
             let text = readFileSync(fullpath).toString();
-            let uri = URI.file(path.resolve(fullpath)).toString();
             let textDocument = TextDocument.create(uri, 'rsl', 0, text);
-            validateTextDocument(textDocument);
+            validateTextDocumentSync(textDocument);
+            unit = getUnit(uri);
+            if (unit && unit.diagnostics) {
+                unit.diagnostics.forEach(diagnostic => {
+                    this.diagnostics.push({range: nameRange, message: diagnostic.message});
+                });
+            }
+            this.addChild(new CImportStatement(textDocument, nameInter, nameRange, relativePath));
         });
     }
     protected parseFor(): void {
@@ -672,10 +743,10 @@ export class RslEntityWithBody extends RslEntity {
         }
     }
     protected parseBody(): void {
-        if (this.range.start === 0 && this.range.end === 0) {
-            this.range = {start: 0, end: this.textDocument.getText().length};
+        if (this.range.end.line === 0 && this.range.end.character === 0) {
+            this.range = {start: {line: 0, character: 0}, end: {line: this.textDocument.lineCount, character: 0}};
         }
-        this.offset = this.range.start;
+        this.offset = this.textDocument.offsetAt(this.range.start);
         this.Skip();
         let curToken: string;
 
@@ -693,7 +764,7 @@ export class RslEntityWithBody extends RslEntity {
                                 switch (tmp.second) {
                                     case kwdNum._const: this.parseVariable(true, true); break;
                                     case kwdNum._var  : this.parseVariable(true); break;
-                                    case kwdNum._record: this.CreateRecord(true); break;
+                                    case kwdNum._record: this.parseRecord(true); break;
                                     case kwdNum._macro: this.parseMacro(true); break;
                                     case kwdNum._class: this.parseClass(true); break;
                                     default: break;
@@ -702,9 +773,9 @@ export class RslEntityWithBody extends RslEntity {
                         } break;
                     case kwdNum._const : this.parseVariable(false, true); break;
                     case kwdNum._var   : this.parseVariable(false); break;
-                    case kwdNum._record: this.CreateRecord(false); break;
+                    case kwdNum._record: this.parseRecord(false); break;
                     case kwdNum._macro : this.parseMacro(false); break;
-                    case kwdNum._import: this.CreateImport(); break;
+                    case kwdNum._import: this.parseImport(); break;
                     case kwdNum._class : this.parseClass(false); break;
                     case kwdNum._for: this.parseFor(); break;
                     default: break;
@@ -725,7 +796,7 @@ class CMacro extends RslEntityWithBody {
         this.setType(returnType);
         this.args = args;
         this.isPrivate = isPrivate;
-        this.range = convertToIRange(textDocument, range);
+        this.range = range;
         this.insertedText = `${name}()`;
         this.addChildren(args);
     }
@@ -749,7 +820,7 @@ class CClass extends RslEntityWithBody {
         this.isPrivate = privateFlag;
         this.insertedText = name;
         this.varType_ = name;
-        this.range = convertToIRange(textDocument, range);
+        this.range = range;
         if (parentName.length > 0) {
             //TODO: подгрузить методы и свойства родительского класса
         }

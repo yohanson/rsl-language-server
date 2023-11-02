@@ -46,7 +46,7 @@ export function getSymbols(
       info = {
         kind: fromCompletionItemKind(node.ObjKind),
         location: {
-          range: convertToRange(document, node.Range),
+          range: node.Range,
           uri: document.uri
         },
         name: getSymbolName(node),

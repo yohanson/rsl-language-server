@@ -20,6 +20,8 @@ import {
     TextDocumentSyncKind,
 } from 'vscode-languageserver/node';
 
+import { URIUppercaseDriveLetter as URI } from './utils/uri-uppercase-drive-letter';
+
 import {
 	TextDocument
 } from 'vscode-languageserver-textdocument';
@@ -32,6 +34,7 @@ import { getSymbols } from './docsymbols';
 
 const connection: ProposedFeatures.Connection = createConnection(ProposedFeatures.all);
 let documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
+let hasDynamicRegistrationCapability: boolean = false;
 let hasConfigurationCapability  : boolean       = false;
 let hasWorkspaceFolderCapability: boolean       = false;
 let hasDiagnosticRelatedInformationCapability   = false;
@@ -54,12 +57,16 @@ function getCurObj(uri: string): RslEntityWithBody {
   return Imports.find(m => m.uri === uri)?.object;
 }
 
+export function getUnit(uri: string): IImport {
+    return Imports.find(m => m.uri === uri);
+}
+
 function FindObject(tdpp: TextDocumentPositionParams): RslEntity {
     let uri = tdpp.textDocument.uri;
     let foundObject: RslEntity = undefined;
     let token: IToken = undefined;
-    let document: TextDocument = getCurDoc(tdpp.textDocument.uri);
-    let tree: RslEntityWithBody = getCurObj(tdpp.textDocument.uri);
+    let document: TextDocument = getCurDoc(uri);
+    let tree: RslEntityWithBody = getCurObj(uri);
     if (tree === undefined) {
         return undefined;
     }
@@ -68,6 +75,7 @@ function FindObject(tdpp: TextDocumentPositionParams): RslEntity {
     if (token === undefined) {
         return undefined;
     }
+    // TODO: search subscript in container like container.subscript();
     let objArr = tree.getActualChilds(curOffset);
     let objects: Array<RslEntity> = new Array();
     for (const element of objArr) {
@@ -84,7 +92,7 @@ function FindObject(tdpp: TextDocumentPositionParams): RslEntity {
         let minDistanse:number = token.range.start;
         for (const iterator of objects)
         {
-            let curDistanse:number = token.range.start - iterator.Range.end;
+            let curDistanse:number = token.range.start - document.offsetAt(iterator.Range.end);
             if (curDistanse < minDistanse)
             {
                 foundObject = iterator;
@@ -117,15 +125,17 @@ function FindObject(tdpp: TextDocumentPositionParams): RslEntity {
 }
 
 connection.onInitialize((params: InitializeParams) => {
+    console.warn("============================= RSL LSP Server Start ===================================");
     let capabilities = params.capabilities;
     workFolderOpened = (params.rootPath != null)? true: false;
 
-    hasConfigurationCapability = !!(capabilities.workspace && !!capabilities.workspace.configuration);
-    hasWorkspaceFolderCapability = !!(capabilities.workspace && !!capabilities.workspace.workspaceFolders);
-    hasDiagnosticRelatedInformationCapability =
-        !!(capabilities.textDocument &&
-        capabilities.textDocument.publishDiagnostics &&
-        capabilities.textDocument.publishDiagnostics.relatedInformation);
+    hasDynamicRegistrationCapability = capabilities.workspace?.didChangeConfiguration?.dynamicRegistration === true;
+    hasConfigurationCapability = capabilities.workspace?.configuration === true;
+    hasWorkspaceFolderCapability = capabilities.workspace?.workspaceFolders === true;
+    hasDiagnosticRelatedInformationCapability = capabilities.textDocument?.publishDiagnostics?.relatedInformation === true;
+    if (params.clientInfo.name === "Neovim") {
+        URI.enableUppercaseDriveLetters(true);
+    }
     return {
         capabilities: {
             textDocumentSync: TextDocumentSyncKind.Incremental,
@@ -147,16 +157,11 @@ connection.onInitialized(() => {
     Imports   = new Array();
 
     if (!workFolderOpened) connection.sendNotification("noRootFolder"); //не открыта папка, надо ругнуться
-    if (hasConfigurationCapability) {
+    if (hasDynamicRegistrationCapability && hasConfigurationCapability) {
         connection.client.register(
             DidChangeConfigurationNotification.type,
             undefined
         );
-    }
-    if (hasWorkspaceFolderCapability) {
-        connection.workspace.onDidChangeWorkspaceFolders(_event => {
-            connection.console.log('Workspace folder change event received.');
-        });
     }
 
     connection.onRequest("getMacros", () => {
@@ -203,19 +208,24 @@ documents.onDidChangeContent(change => {
     validateTextDocument(change.document);
 });
 
-export async function validateTextDocument(textDocument: TextDocument): Promise<void> {
-    globalSettings = await getDocumentSettings(textDocument.uri);
+export function validateTextDocumentSync(textDocument: TextDocument): void {
     let text = textDocument.getText();
 
-    let diagnostics: Diagnostic[] = [];
-    const module = Imports.find(m => m.uri === textDocument.uri);
-    let range: Range = { start: textDocument.positionAt(0), end: {line: textDocument.lineCount + 1, character: 0 }};
-    if (module) {
-        module.object = new RslEntityWithBody(textDocument, range, CompletionItemKind.Unit, diagnostics);
+    const unit = getUnit(textDocument.uri);
+    let range: Range = { start: textDocument.positionAt(0), end: {line: textDocument.lineCount, character: 0 }};
+    if (unit) {
+        unit.diagnostics = [];
+        unit.object = undefined;
+        unit.object = new RslEntityWithBody(textDocument, range, CompletionItemKind.Unit);
+        unit.diagnostics = unit.object.getDiagnostics();
     } else {
-        Imports.push({ uri: textDocument.uri, object: new RslEntityWithBody(textDocument, range, CompletionItemKind.Unit, diagnostics) });
+        // add import without object to prevent loop
+        Imports.push({ uri: textDocument.uri, object: undefined, diagnostics: []});
+        let unitObject = new RslEntityWithBody(textDocument, range, CompletionItemKind.Unit);
+        let unit = getUnit(textDocument.uri);
+        unit.object = unitObject;
+        unit.diagnostics = unitObject.getDiagnostics();
     }
-
 
     let pattern = /\b(record|array)\b/gi;
     let m: RegExpExecArray | null;
@@ -243,19 +253,22 @@ export async function validateTextDocument(textDocument: TextDocument): Promise<
                 }
             ];
         }
-        diagnostics.push(diagnostic);
     }
+}
 
-    // Send the computed diagnostics to VSCode.
-    connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+export async function validateTextDocument(textDocument: TextDocument): Promise<void> {
+    globalSettings = await getDocumentSettings(textDocument.uri);
+    validateTextDocumentSync(textDocument);
+    Imports.forEach(unit => {
+        connection.sendDiagnostics({ uri: unit.uri, diagnostics: unit.diagnostics });
+    })
 }
 
 connection.onDidChangeWatchedFiles(_change => {
     connection.console.log('We received an file change event');
 });
 
-function isCommentOrString(tdpp: TextDocumentPositionParams):boolean
-{
+function isCommentOrString(tdpp: TextDocumentPositionParams): boolean {
     let document: TextDocument = getCurDoc(tdpp.textDocument.uri);
     let text: string = document.getText();
     let patterns = [];
@@ -330,12 +343,14 @@ connection.onCompletion((tdpp: TextDocumentPositionParams): CompletionItem[] => 
 connection.onCompletionResolve((item: CompletionItem): CompletionItem => {return item;});
 
 connection.onHover((tdpp: TextDocumentPositionParams): Hover => {
+    let uri = tdpp.textDocument.uri;
     let hover: Hover =  undefined;
     if (!isCommentOrString(tdpp))
     {
-        let document: TextDocument = getCurDoc(tdpp.textDocument.uri);
+
+        let document: TextDocument = getCurDoc(uri);
         let obj: RslEntity = FindObject(tdpp);
-        let token: IToken = getCurObj(tdpp.textDocument.uri).getCurrentToken(document.offsetAt(tdpp.position));
+        let token: IToken = getCurObj(uri).getCurrentToken(document.offsetAt(tdpp.position));
         if (obj != undefined) {
             let completionInfo = obj.CompletionInfo;
             let contents: MarkupContent = {kind: MarkupKind.Markdown, value: completionInfo.detail};
@@ -368,28 +383,22 @@ connection.onDefinition((tdpp: TextDocumentPositionParams) => {
         if (obj != undefined) {
             let document: TextDocument = getCurDoc(obj.getTextDocument().uri);
             if (document === undefined) return null;
-            let range = obj.Range;
-            let startPos: Position = document.positionAt(range.start);
-            let endPos  : Position = document.positionAt(range.start + obj.Name.length);
-            result = Location.create(obj.getTextDocument().uri, {
-                start: startPos,
-                end  : endPos
-            })
+            result = Location.create(obj.getTextDocument().uri, obj.Range)
         }
     }
     return (result !== undefined)? result: null;
 });
 
 function refreshModule(textDocument: TextDocument) {
-  const { uri } = textDocument;
+  const uri = textDocument.uri;
   let range: Range = { start: textDocument.positionAt(0), end: {line: textDocument.lineCount + 1, character: 0 }};
   const object = new RslEntityWithBody(textDocument, range);
 
-  const module = Imports.find(m => m.uri === uri);
+  const module = Imports.find(m => m.uri === textDocument.uri);
   if (module) {
     module.object = object;
   } else {
-    Imports.push({ uri, object });
+    Imports.push({ uri, object, diagnostics: object.getDiagnostics()});
   }
 }
 

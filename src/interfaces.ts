@@ -1,4 +1,4 @@
-import { CompletionItemKind, InsertTextFormat, CompletionItem, Location, MarkupContent, MarkupKind } from 'vscode-languageserver';
+import { CompletionItemKind, InsertTextFormat, CompletionItem, Location, MarkupContent, MarkupKind, Range, Diagnostic } from 'vscode-languageserver';
 import { varType } from './enums';
 import { RslEntityWithBody } from './common';
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -6,8 +6,9 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
  * Интерфейс для массива с импортированными модулями
  */
 export interface IImport {
-    uri     : string;
-    object  : RslEntityWithBody;
+    uri: string;
+    object: RslEntityWithBody;
+    diagnostics: Diagnostic[];
 }
 
 /**
@@ -75,7 +76,7 @@ export abstract class RslEntity {
     /**
      * Начало и конец блока
      */
-    protected range           : IRange;
+    protected range: Range;
     /**
      * Тип Объекта, перечисление CompletionItemKind
      */
@@ -104,7 +105,7 @@ export abstract class RslEntity {
         this.name            = "";
         this.textDocument = textDocument;
         this.isPrivate        = false;
-        this.range           = {start: 0, end: 0};
+        this.range           = {start: {line: 0, character: 0}, end: {line: 0, character: 0}};
         this.objKind         = CompletionItemKind.Unit;
         this.varType_        = "variant";
         this.description     = {kind: MarkupKind.Markdown, value: ''};
@@ -137,11 +138,11 @@ export abstract class RslEntity {
     /**
      * Возвращает диапазон блока
      */
-    get Range(): IRange {return this.range}
+    get Range(): Range {return this.range}
     /**
      * Устанавливает диапазон блока
      */
-    setRange(range:IRange) {this.range = range}
+    setRange(range: Range) {this.range = range}
     /**
      * Возвращает тип объекта
      */

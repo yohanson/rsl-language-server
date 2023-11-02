@@ -2,7 +2,8 @@ import {
   CompletionItemKind,
   SymbolKind,
   TextDocument,
-  Range
+  Range,
+  Position,
 } from 'vscode-languageserver';
 import { IRange } from '../interfaces';
 
@@ -18,6 +19,13 @@ export function convertToIRange(doc: TextDocument, rng: Range): IRange {
     start: doc.offsetAt(rng.start),
     end: doc.offsetAt(rng.end)
   };
+}
+
+export function positionToString(position: Position): string {
+    return position.line + "," + position.character
+}
+export function rangeToString(range: Range): string {
+    return positionToString(range.start) + ".." + positionToString(range.end)
 }
 
 export function fromCompletionItemKind(k: CompletionItemKind): SymbolKind {
