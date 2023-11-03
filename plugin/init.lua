@@ -11,6 +11,6 @@ require('lspconfig').rsl.setup({})
 
 vim.filetype.add({
   pattern = {
-    ['.*%.mac'] = { 'rsl', {priority = 10}},
+    ['.*%.[mM][aA][cC]'] = { 'rsl', {priority = 10}},
   },
 })
