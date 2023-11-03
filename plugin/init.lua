@@ -9,3 +9,8 @@ require('lspconfig.configs').rsl = {
 }
 require('lspconfig').rsl.setup({})
 
+vim.filetype.add({
+  pattern = {
+    ['.*%.mac'] = { 'rsl', {priority = 10}},
+  },
+})
