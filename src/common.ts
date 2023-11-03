@@ -30,6 +30,7 @@ import { convertToRange, convertToIRange, rangeToString, positionToString } from
 import { fileURLToPath } from 'url';
 import * as path from 'path';
 import { searchMacrofile } from './macrosearch';
+import * as iconv from 'iconv-lite';
 
 class CArray implements IArray{
     _it:Array<string>;
@@ -711,7 +712,8 @@ export class RslEntityWithBody extends RslEntity {
                 return;
             }
             //запросим открытие такого файла
-            let text = readFileSync(fullpath).toString();
+            let buffer = readFileSync(fullpath);
+            let text = iconv.decode(buffer, 'cp866');
             let textDocument = TextDocument.create(uri, 'rsl', 0, text);
             validateTextDocumentSync(textDocument);
             unit = getUnit(uri);
