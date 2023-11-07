@@ -304,9 +304,6 @@ export class RslEntityWithBody extends RslEntity {
         if (offset > 0) {
             this.SavePos();
             this.offset = offset;
-            if (this.IsStopChar()) {
-                this.offset--;
-            }
             if (!DEFAULT_WHITESPACES.includes(this.CurrentChar)) {
                 if (this.CurrentChar === ".") this.offset--;
                 while (!this.IsStopChar() && this.CurrentChar != undefined) {
@@ -407,19 +404,18 @@ export class RslEntityWithBody extends RslEntity {
         let savedPosition:number = this.Pos;
         let token: string = "";
         if (!this.IsStopChar()) {
-            if (this.CurrentChar == "\"") {
+            if (this.CurrentChar == '"') {
                 let stop: boolean = false;
                 token = token + this.CurrentChar;
                 this.Next();
 
                 while (!stop && !this.End) {
-                    stop = (this.CurrentChar == "\"" && this.charAt(this.offset - 1) != "\\") ? true : false;
+                    stop = (this.CurrentChar == '"' && this.charAt(this.offset - 1) != "\\") ? true : false;
                     token = token + this.CurrentChar;
                     this.Next();
                 }
-            }
-            else {
-                while (!this.IsToken(token) && !this.End) {
+            } else {
+                while (!this.isCompleteToken(token) && !this.End) {
                     token = token + this.CurrentChar;
                     this.Next();
                 }
@@ -436,8 +432,7 @@ export class RslEntityWithBody extends RslEntity {
                     token = this.NextToken(skipComment).str;
                 }
             }
-        }
-        else {
+        } else {
             token = this.CurrentChar;
             this.Next();
         }
@@ -452,16 +447,14 @@ export class RslEntityWithBody extends RslEntity {
         token.range = {start: token.range.end + 1, end: token.range.start + 1};
         return token;
     }
-    protected     IsToken(chr: string)        : boolean   {
+    protected isCompleteToken(chr: string): boolean {
         let answer: If_s<number> = {first: false, second: 0};
-        if (chr != "") {
-            answer = KEYWORDS.is(chr.toLowerCase());
-            if (answer.first && answer.second != kwdNum._olc && answer.second != kwdNum._mlc_o && answer.second != kwdNum._mlc_c) {
-                answer.first = this.IsStopChar();
-            }
-            else if (!answer.first && this.IsStopChar()) {
-                answer.first = true;
-            }
+        if (chr === "") return false;
+        answer = KEYWORDS.is(chr.toLowerCase());
+        if (answer.first && answer.second != kwdNum._olc && answer.second != kwdNum._mlc_o && answer.second != kwdNum._mlc_c) {
+            answer.first = this.IsStopChar();
+        } else if (!answer.first && this.IsStopChar()) {
+            answer.first = true;
         }
         return answer.first;
     }

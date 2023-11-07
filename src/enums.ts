@@ -3,7 +3,7 @@
  */
 export const DEFAULT_WHITESPACES: string = " \n\r\t";
 export const LINEBREAKS: string = "\n\r";
-export const STOP_CHARS         : string = ".,():;=<>![]" + DEFAULT_WHITESPACES;
+export const STOP_CHARS         : string = ".,():;=<>![]+-*" + DEFAULT_WHITESPACES;
 export const DIGITS             : string = "0123456789";
 export const OLC                : string = "//";
 export const MLC_O              : string = "/*";
@@ -26,7 +26,7 @@ export interface ObjInfo {
 /**
  * Нумерация типов переменных.
  */
-export enum varType {   
+export enum varType {
     _variant
     , _integer
     , _double
