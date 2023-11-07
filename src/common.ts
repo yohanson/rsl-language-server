@@ -201,7 +201,6 @@ export class CVar extends RslEntity {
             this.detail += `: ${this.varType_}`;
         }
         if (this.value.length > 0) this.detail += ` = ${this.value}`;
-        this.detail += '\n'
     }
     isActual(pos: number)   : boolean { return (this.textDocument.offsetAt(this.range.end) <= pos) }
     reParse()             : void {}

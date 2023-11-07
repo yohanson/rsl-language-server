@@ -31,6 +31,7 @@ import { getDefaults, getCompletionInfoForArray } from './defaults';
 
 import { RslEntityWithBody } from './common';
 import { getSymbols } from './docsymbols';
+import { convertToRange } from './utils';
 
 const connection: ProposedFeatures.Connection = createConnection(ProposedFeatures.all);
 let documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
@@ -353,19 +354,18 @@ connection.onHover((tdpp: TextDocumentPositionParams): Hover => {
         let token: IToken = getCurObj(uri).getCurrentToken(document.offsetAt(tdpp.position));
         if (obj != undefined) {
             let completionInfo = obj.CompletionInfo;
-            let contents: MarkupContent = {kind: MarkupKind.Markdown, value: completionInfo.detail};
+            let contents: MarkupContent = {kind: MarkupKind.Markdown, value: '\n```rsl\n' + completionInfo.detail + '\n```\n' };
             if (typeof completionInfo.documentation === 'object') {
                 contents.value += completionInfo.documentation.value;
             } else {
-                contents.value += completionInfo.documentation;
+                contents.value += '\n```\n' + completionInfo.documentation + '\n```\n';
             }
             hover = {
                 contents: contents,
-                range : { start: document.positionAt(token.range.start),
-                          end  : document.positionAt(token.range.end) }
+                range: convertToRange(document, token.range)
             }
         } else {
-            return {contents: "Token '" + token.str + "' not found", range: {start: tdpp.position, end: tdpp.position}};
+            return {contents: "Token '`" + token.str + "`' not found", range: {start: tdpp.position, end: tdpp.position}};
         }
     } else {
         return {contents: "This is comment", range: {start: tdpp.position, end: tdpp.position}};
